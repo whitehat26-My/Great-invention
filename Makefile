@@ -1,4 +1,4 @@
-.PHONY: help install up down purge migrate revision seed reset test lint fmt typecheck api worker beat simulate check
+.PHONY: help install up down purge migrate revision seed reset test lint fmt fmt-check typecheck api worker beat simulate check
 
 PY := .venv/bin/python
 PIP := .venv/bin/pip
@@ -42,10 +42,13 @@ lint: ## Lint
 fmt: ## Format and auto-fix
 	.venv/bin/ruff format src tests && .venv/bin/ruff check --fix src tests
 
+fmt-check: ## Verify formatting without changing anything (what CI runs)
+	.venv/bin/ruff format --check src tests
+
 typecheck: ## Static type check
 	.venv/bin/mypy
 
-check: lint typecheck test ## Everything CI would run
+check: lint fmt-check typecheck test ## Everything CI runs
 
 api: ## Run the FastAPI webhook receiver
 	.venv/bin/uvicorn restaurant_ai.api.main:app --reload --port 8000

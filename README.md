@@ -194,7 +194,7 @@ make api         # FastAPI webhook receiver on :8000
 make worker      # Celery worker
 make beat        # Celery beat — the operating rhythm below
 make test        # 493 tests
-make check       # lint + typecheck + test
+make check       # everything CI runs: lint, format, typecheck, tests
 ```
 
 Useful commands:
@@ -299,8 +299,15 @@ src/restaurant_ai/
 
 ## Testing
 
-493 tests. `pytest` runs them all against a real PostgreSQL with no API key and
-no network.
+493 tests, run on every push and pull request by
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml). `pytest` runs them all
+against a real PostgreSQL with no API key and no network — if CI ever needs a
+secret to pass, the deterministic path has regressed.
+
+CI does four things beyond the suite: checks formatting (so `make fmt` and CI
+cannot disagree), typechecks, replays a full simulated service day through the
+CLI to prove the entry point a person actually types still works, and round
+trips the migrations down to base and back up.
 
 PostgreSQL rather than SQLite because the schema uses JSONB, partial constraints
 and expression indexes that SQLite cannot express — an in-memory substitute
