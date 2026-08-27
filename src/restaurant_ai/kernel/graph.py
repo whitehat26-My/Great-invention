@@ -282,7 +282,21 @@ def build_graph(spec: AgentSpec):
                 parts.append(f"{len(rejected)} action(s) rejected.")
             summary = " ".join(parts)
 
+        # A tool that raised is recorded and the run continues, which is right —
+        # one broken tool should not lose the rest of the work. But the run must
+        # not then report clean success: that is how a crash in the pacing agent
+        # went unnoticed while it silently stopped sending tickets to the pass.
+        failed_actions = [a for a in (state.get("actions") or []) if a.error]
+        if failed_actions:
+            names = ", ".join(sorted({a.tool_name for a in failed_actions}))
+            summary = (summary + " " if summary else "") + (
+                f"{len(failed_actions)} tool call(s) failed ({names}); that work was not done."
+            )
+
         if state.get("error"):
+            status = AgentRunStatus.FAILED
+        elif failed_actions and not state.get("results"):
+            # Everything the agent tried to do failed.
             status = AgentRunStatus.FAILED
         elif rejected and not approved:
             status = AgentRunStatus.REJECTED

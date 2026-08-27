@@ -24,6 +24,24 @@ def _clean_subscribers():
     clear_subscribers()
 
 
+@pytest.fixture(autouse=True)
+def _quiet_outbox(db):
+    """Mark pre-existing events dispatched so a drain only sees this test's own.
+
+    The outbox is shared state: trading, agent runs and the simulation all write
+    to it. Without this, a test that drains and counts deliveries counts
+    everyone else's events too. Rolled back with the rest of the transaction.
+    """
+    from restaurant_ai import clock
+
+    db.execute(
+        OutboxEvent.__table__.update()
+        .where(OutboxEvent.dispatched_at.is_(None))
+        .values(dispatched_at=clock.utcnow())
+    )
+    db.flush()
+
+
 class TestPublish:
     def test_writes_to_the_outbox(self, db):
         # Returned directly rather than re-queried: the database holds events
@@ -38,9 +56,7 @@ class TestPublish:
         # Written through the caller's session, so it lives or dies with the
         # state change beside it.
         row = publish(Event(Topic.ORDER_PLACED, {"order": "A-1"}), session=db)
-        assert db.execute(
-            select(OutboxEvent).where(OutboxEvent.id == row.id)
-        ).scalar_one_or_none()
+        assert db.execute(select(OutboxEvent).where(OutboxEvent.id == row.id)).scalar_one_or_none()
 
     def test_undispatched_by_default(self, db):
         row = publish(Event(Topic.ORDER_PLACED, {}), session=db)

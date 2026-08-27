@@ -94,10 +94,25 @@ def reconcile_day(context: ToolContext, business_date: str | None = None) -> dic
     if not payments:
         return {"reconciled": False, "note": f"No payments recorded on {day}."}
 
-    # Cash never appears on a merchant statement, so it is counted separately
-    # rather than matched.
+    # Three kinds of money settle three different ways, and only one of them
+    # appears on today's merchant statement:
+    #
+    #   cash              never settles electronically; counted, not matched
+    #   card / e-wallet   settles via the acquirer within a day or two
+    #   delivery platform settles weekly, net of commission, on the platform's
+    #                     own payout - so on the day of trading it is an
+    #                     outstanding receivable, NOT an unmatched exception
+    #
+    # Matching delivery takings against the card statement reported an entire
+    # day of platform sales as unreconciled every single night.
     cash_total = sum((p.amount + p.tip for p in payments if p.method == PaymentMethod.CASH), ZERO)
-    electronic = [p for p in payments if p.method != PaymentMethod.CASH]
+    delivery_outstanding = sum(
+        (p.amount + p.tip for p in payments if p.method == PaymentMethod.DELIVERY_PLATFORM),
+        ZERO,
+    )
+    electronic = [
+        p for p in payments if p.method not in (PaymentMethod.CASH, PaymentMethod.DELIVERY_PLATFORM)
+    ]
 
     internal = [
         InternalRecord(
@@ -156,7 +171,11 @@ def reconcile_day(context: ToolContext, business_date: str | None = None) -> dic
     result.card_settled = card_settled
     result.cash_counted = cash_total
     result.delivery_net = delivery_net
-    result.variance = (pos_total - card_settled - cash_total).quantize(Decimal("0.01"))
+    # Everything the POS recorded must be accounted for as settled, counted, or
+    # legitimately still owed to us by a delivery platform.
+    result.variance = (pos_total - card_settled - cash_total - delivery_outstanding).quantize(
+        Decimal("0.01")
+    )
 
     batch = session.execute(
         select(ReconciliationBatch).where(ReconciliationBatch.business_date == day)
@@ -179,20 +198,24 @@ def reconcile_day(context: ToolContext, business_date: str | None = None) -> dic
     batch.matched_count = len(result.matched)
     batch.unmatched_count = len(result.exceptions)
     batch.is_balanced = result.is_balanced
-    batch.notes = result.summary()
+    batch.notes = result.summary() + (
+        f" {delivery_outstanding:.2f} of delivery takings await the platform payout."
+        if delivery_outstanding > 0
+        else ""
+    )
 
-    for match in result.matches:
+    for pair in result.matches:
         session.add(
             ReconciliationMatch(
                 batch_id=batch.id,
-                left_type=match.internal.record_type if match.internal else "statement",
-                left_id=match.internal.record_id if match.internal else "",
-                right_type="bank_transaction" if match.statement else None,
-                right_id=match.statement.line_id if match.statement else None,
-                amount=match.amount,
-                difference=match.difference,
-                is_exception=match.is_exception,
-                reason=match.reason or None,
+                left_type=pair.internal.record_type if pair.internal else "statement",
+                left_id=pair.internal.record_id if pair.internal else "",
+                right_type="bank_transaction" if pair.statement else None,
+                right_id=pair.statement.line_id if pair.statement else None,
+                amount=pair.amount,
+                difference=pair.difference,
+                is_exception=pair.is_exception,
+                reason=pair.reason or None,
             )
         )
 
@@ -227,6 +250,7 @@ def reconcile_day(context: ToolContext, business_date: str | None = None) -> dic
         "pos_total": str(pos_total),
         "card_settled": str(card_settled),
         "cash_counted": str(cash_total),
+        "delivery_outstanding": str(delivery_outstanding),
         "delivery_net": str(delivery_net),
         "variance": str(result.variance),
         "balanced": result.is_balanced,

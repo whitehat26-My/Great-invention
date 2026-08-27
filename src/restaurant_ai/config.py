@@ -113,7 +113,8 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    # Every field has a default or comes from the environment.
+    return Settings()  # type: ignore[call-arg]
 
 
 def reset_settings_cache() -> None:

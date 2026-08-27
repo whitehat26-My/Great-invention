@@ -186,8 +186,15 @@ class SupplierPort(Protocol):
     """Supplier ordering, delivery and invoicing."""
 
     def send_purchase_order(
-        self, po_number: str, supplier_code: str, lines: list[tuple[str, Decimal]]
-    ) -> str: ...
+        self,
+        po_number: str,
+        supplier_code: str,
+        lines: list[tuple[str, Decimal]],
+        unit_prices: dict[str, Decimal] | None = None,
+    ) -> str:
+        """Transmit a PO. ``unit_prices`` is the agreed price per supplier SKU,
+        which the invoice three-way match later compares the bill against."""
+        ...
 
     def fetch_deliveries(self, since: datetime) -> list[DeliveryNote]: ...
 

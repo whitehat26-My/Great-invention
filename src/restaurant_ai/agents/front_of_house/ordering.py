@@ -205,9 +205,9 @@ def place_order(
         chunk = chunk.strip()
         if not chunk:
             continue
-        sku, _, quantity = chunk.partition(":")
+        sku, _, raw_quantity = chunk.partition(":")
         try:
-            parsed.append((sku.strip(), max(1, int(quantity or 1))))
+            parsed.append((sku.strip(), max(1, int(raw_quantity or 1))))
         except ValueError:
             return {"placed": False, "error": f"Could not read quantity in {chunk!r}."}
 

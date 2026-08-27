@@ -19,6 +19,7 @@ from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel, Field
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 
 from restaurant_ai.agents.common import active_menu_items, on_hand_all, sales_history, units_sold_on
@@ -150,7 +151,7 @@ def build_prep_plan(
     }
 
     # Persist the per-item forecast so tomorrow can score it.
-    session.execute(ItemForecast.__table__.delete().where(ItemForecast.business_date == target))
+    session.execute(sa_delete(ItemForecast).where(ItemForecast.business_date == target))
     for item_id, entry in result.items.items():
         if item_id not in items:
             continue

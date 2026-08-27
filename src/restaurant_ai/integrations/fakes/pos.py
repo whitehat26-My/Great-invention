@@ -68,8 +68,8 @@ class FakePOS:
 
     provider = "fake_pos"
 
-    def __init__(self, base_covers: int = 96, seed: int | None = None) -> None:
-        self.base_covers = base_covers
+    def __init__(self, base_covers: int | None = None, seed: int | None = None) -> None:
+        self.base_covers = base_covers if base_covers is not None else 96
         self._seed = seed
         self._pushed: list[PosOrder] = []
 

@@ -277,12 +277,12 @@ def seed_reference(session: Session) -> dict[str, int]:
         _upsert(session, LedgerAccount, {"code": code}, {"name": name, "type": acc_type})
     counts["ledger_accounts"] = len(LEDGER_ACCOUNTS)
 
-    for slug, title, category, role, body in SOPS:
+    for slug, title, category, applies_to, body in SOPS:
         _upsert(
             session,
             SopDocument,
             {"slug": slug},
-            {"title": title, "category": category, "applies_to_role": role, "body": body},
+            {"title": title, "category": category, "applies_to_role": applies_to, "body": body},
         )
     counts["sops"] = len(SOPS)
 

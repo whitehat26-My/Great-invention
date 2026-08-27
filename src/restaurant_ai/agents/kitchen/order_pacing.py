@@ -116,10 +116,9 @@ def fire_tickets(context: ToolContext, include_channels: str = "all") -> dict[st
         for r in session.execute(select(Recipe).where(Recipe.menu_item_id.isnot(None))).scalars()
     }
 
-    already = {
-        ticket.order_line_id
-        for ticket in session.execute(select(KdsTicket.order_line_id)).scalars()
-    }
+    # scalars() on a single-column select yields the values themselves, not
+    # rows: these are order_line_id strings already.
+    already = set(session.execute(select(KdsTicket.order_line_id)).scalars())
 
     requests: list[TicketRequest] = []
     for line, header, item in rows:
@@ -166,9 +165,9 @@ def fire_tickets(context: ToolContext, include_channels: str = "all") -> dict[st
 
     fired_orders = {t.order_id for t in plan.tickets}
     for order_id in fired_orders:
-        header = session.get(OrderHeader, order_id)
-        if header is not None and header.status == OrderStatus.OPEN:
-            header.status = OrderStatus.FIRED
+        fired_header = session.get(OrderHeader, order_id)
+        if fired_header is not None and fired_header.status == OrderStatus.OPEN:
+            fired_header.status = OrderStatus.FIRED
 
     session.flush()
     publish(
@@ -201,9 +200,7 @@ def fire_tickets(context: ToolContext, include_channels: str = "all") -> dict[st
         "slipped_tickets": len(slipped),
         "dine_in_slipped": len(dine_in_slipped),
         "warnings": plan.warnings,
-        "next_fire": min((t.fire_at for t in plan.tickets), default=None).isoformat()
-        if plan.tickets
-        else None,
+        "next_fire": (min(t.fire_at for t in plan.tickets).isoformat() if plan.tickets else None),
     }
 
 

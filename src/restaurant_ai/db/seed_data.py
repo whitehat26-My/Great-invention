@@ -485,7 +485,7 @@ TABLES: list[tuple[str, int, str, bool]] = [
 
 # --- Staff ------------------------------------------------------------------
 # (code, name, role, hourly_rate, max_weekly_hours)
-STAFF: list[tuple[str, str, ShiftRole, str, int]] = [
+STAFF: list[tuple[str, str, ShiftRole, float, int]] = [
     ("EMP-001", "Aishah Rahman", ShiftRole.MANAGER, 32.00, 45),
     ("EMP-002", "Chandran Nair", ShiftRole.CHEF, 28.50, 45),
     ("EMP-003", "Wong Mei Ling", ShiftRole.CHEF, 27.00, 45),

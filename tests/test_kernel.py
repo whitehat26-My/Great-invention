@@ -126,11 +126,18 @@ class TestHappyPath:
         )
         with ephemeral_checkpointer() as cp:
             outcome = run_agent(spec, checkpointer=cp)
+        # Explicitly ordered: without ORDER BY the database may return rows in
+        # any order, which made this assertion intermittently fail.
         actions = list(
-            db.execute(select(AgentAction).where(AgentAction.run_id == outcome.run_id)).scalars()
+            db.execute(
+                select(AgentAction)
+                .where(AgentAction.run_id == outcome.run_id)
+                .order_by(AgentAction.sequence)
+            ).scalars()
         )
         assert len(actions) == 2
         assert [a.sequence for a in actions] == [0, 1]
+        assert [a.arguments["note"] for a in actions] == ["a", "b"]
 
     def test_no_tool_calls_is_fine(self, db):
         spec = _make_spec("t_noop", [])

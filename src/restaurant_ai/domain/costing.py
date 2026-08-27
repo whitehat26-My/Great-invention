@@ -92,6 +92,8 @@ def explode_recipe(
     for component in recipe.components:
         if component.ingredient_id is not None:
             ingredient = component.ingredient
+            if ingredient is None:  # pragma: no cover - FK guarantees this
+                raise BomError(f"Component references missing ingredient {component.ingredient_id}")
             amount = convert(
                 component.quantity,
                 component.uom,

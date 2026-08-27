@@ -59,10 +59,14 @@ def get_model(tier: str = "conversational") -> BaseChatModel:
         )
 
     from langchain_anthropic import ChatAnthropic
+    from pydantic import SecretStr
 
-    model = ChatAnthropic(
+    # langchain-anthropic's stubs disagree with its runtime signature here
+    # (model / max_tokens are accepted; api_key coerces a str). Verified working
+    # against the installed version.
+    model = ChatAnthropic(  # type: ignore[call-arg]
         model=model_name,
-        api_key=settings.anthropic_api_key,
+        api_key=SecretStr(settings.anthropic_api_key),
         max_tokens=settings.llm_max_tokens,
         temperature=settings.llm_temperature,
     )

@@ -164,8 +164,8 @@ def build_week(
     for assignment in result.assignments:
         requirement = assignment.requirement
         key = (requirement.business_date, requirement.role, requirement.starts_at)
-        shift = shifts_by_key.get(key)
-        if shift is None:
+        existing = shifts_by_key.get(key)
+        if existing is None:
             shift = Shift(
                 business_date=requirement.business_date,
                 role=requirement.role,
@@ -177,6 +177,8 @@ def build_week(
             session.add(shift)
             session.flush()
             shifts_by_key[key] = shift
+        else:
+            shift = existing
 
         session.add(
             ShiftAssignment(
@@ -219,13 +221,20 @@ def build_week(
 
 
 def autonomous(context: ToolContext, perceived: dict[str, Any]) -> dict[str, Any]:
+    # A caller can pin the window (the simulator rosters a single day); by
+    # default this builds next week.
+    args: dict[str, Any] = {"days": int(context.state.get("days", 7))}
+    if context.state.get("week_starting"):
+        args["week_starting"] = context.state["week_starting"]
+
+    target = args.get("week_starting") or perceived.get("week_starting")
     return {
         "summary": (
-            f"Building the roster for week starting {perceived.get('week_starting')} across "
+            f"Building the roster from {target} across "
             f"{perceived.get('active_staff')} active staff."
         ),
         "results": {},
-        "tool_calls": [{"name": "build_week", "args": {"days": 7}}],
+        "tool_calls": [{"name": "build_week", "args": args}],
     }
 
 

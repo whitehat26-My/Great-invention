@@ -445,6 +445,19 @@ class PerformanceMetrics:
         under 60% is healthy, over 70% is losing money on every cover.
         """
         notes: list[str] = []
+
+        # Prime cost is COGS PLUS labour. With no labour recorded the figure is
+        # not a low prime cost, it is an incomplete one, and calling it healthy
+        # would tell an owner their worst month was their best.
+        if self.labour_cost <= ZERO:
+            notes.append(
+                f"Labour cost is zero for this day, so the {self.prime_cost_pct * 100:.1f}% "
+                f"prime cost below is COGS only and understates the real figure. Check that "
+                f"the roster was published and hours were recorded before acting on it."
+            )
+            notes.append(f"Food cost alone is {self.food_cost_pct * 100:.1f}% of revenue.")
+            return " ".join(notes)
+
         if self.prime_cost_pct <= Decimal("0.60"):
             notes.append(f"Prime cost {self.prime_cost_pct * 100:.1f}% is healthy (target <=60%).")
         elif self.prime_cost_pct <= Decimal("0.70"):
