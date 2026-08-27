@@ -61,16 +61,34 @@ def get_model(tier: str = "conversational") -> BaseChatModel:
     from langchain_anthropic import ChatAnthropic
     from pydantic import SecretStr
 
+    kwargs: dict[str, Any] = {
+        "model": model_name,
+        "api_key": SecretStr(settings.anthropic_api_key),
+        "max_tokens": settings.llm_max_tokens,
+    }
+    # Only send a sampling parameter if one was actually asked for. Claude
+    # Opus 5 and Sonnet 5 reject the request outright if `temperature` is
+    # present at all, so a defaulted 0.0 is not a harmless no-op — it is a 400
+    # on every single call the platform would ever make.
+    if settings.llm_temperature is not None:
+        kwargs["temperature"] = settings.llm_temperature
+    if settings.llm_thinking != "off":
+        # Adaptive: the model decides how hard to think per request. That suits
+        # both tiers — "what is on the menu" costs nothing extra, while "does
+        # this dish contain peanuts" gets the thought it deserves.
+        kwargs["thinking"] = {"type": settings.llm_thinking}
+
     # langchain-anthropic's stubs disagree with its runtime signature here
     # (model / max_tokens are accepted; api_key coerces a str). Verified working
     # against the installed version.
-    model = ChatAnthropic(  # type: ignore[call-arg]
+    model = ChatAnthropic(**kwargs)  # type: ignore[arg-type]
+    log.info(
+        "model initialised",
+        tier=tier,
         model=model_name,
-        api_key=SecretStr(settings.anthropic_api_key),
+        thinking=settings.llm_thinking,
         max_tokens=settings.llm_max_tokens,
-        temperature=settings.llm_temperature,
     )
-    log.info("model initialised", tier=tier, model=model_name)
     _cache[model_name] = model
     return model
 
@@ -85,5 +103,7 @@ def describe_provider() -> dict[str, Any]:
         "provider": settings.llm_provider,
         "reasoning": settings.model_reasoning,
         "conversational": settings.model_conversational,
+        "thinking": settings.llm_thinking,
+        "max_tokens": settings.llm_max_tokens,
         "has_key": bool(settings.anthropic_api_key),
     }

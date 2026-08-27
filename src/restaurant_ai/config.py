@@ -46,8 +46,20 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     model_reasoning: str = "claude-opus-5"
     model_conversational: str = "claude-sonnet-5"
-    llm_max_tokens: int = 4096
-    llm_temperature: float = 0.0
+    # Thinking output is drawn from this same budget, so it has to cover the
+    # reasoning as well as the answer.
+    llm_max_tokens: int = 8192
+    # Left unset on purpose. Claude Opus 5 and Sonnet 5 removed the sampling
+    # parameters and reject a request that carries one, so sending
+    # `temperature: 0.0` — the obvious default for an operations system that
+    # wants repeatable answers — fails the call outright. Setting this is only
+    # correct against a model old enough to accept it.
+    llm_temperature: float | None = None
+    # Adaptive thinking on the reasoning tier: the model decides how much to
+    # think per request rather than being given a fixed budget. Set to
+    # "disabled" to turn it off, or "off" to send nothing at all (which is what
+    # a pre-4.6 model needs).
+    llm_thinking: Literal["adaptive", "disabled", "off"] = "adaptive"
     agent_max_tool_iterations: int = 6
 
     # --- Integration providers ---------------------------------------------
