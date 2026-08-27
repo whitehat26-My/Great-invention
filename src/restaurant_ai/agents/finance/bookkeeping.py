@@ -415,6 +415,7 @@ def autonomous(context: ToolContext, perceived: dict[str, Any]) -> dict[str, Any
 BOOKKEEPING_AGENT = register(
     AgentSpec(
         name="bookkeeping",
+        person="Emil",
         department="finance",
         title="Bookkeeping & Reconciliation Agent",
         description=(

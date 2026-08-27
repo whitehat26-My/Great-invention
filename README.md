@@ -36,41 +36,41 @@ four stop.
 ## The thirteen agents
 
 ### Front of House
-| Agent | What it does |
-|---|---|
-| **Reservation & Table Management** | Takes bookings from WhatsApp, web and phone; seats parties on the tightest-fitting table; flags tables running past their turn |
-| **Conversational Order** | Phone, drive-thru and kiosk orders; interprets dietary requests against the actual recipe; routes to the POS |
-| **Feedback & Reputation** | Sweeps Google/social hourly, classifies, drafts replies, escalates the serious ones |
+| Name | Agent | What it does |
+|---|---|---|
+| **Freddy** | Reservation & Table Management | Takes bookings from WhatsApp, web and phone; seats parties on the tightest-fitting table; flags tables running past their turn |
+| **Melissa** | Conversational Order | Phone, drive-thru and kiosk orders; interprets dietary requests against the actual recipe; routes to the POS |
+| **Aziera** | Feedback & Reputation | Sweeps Google/social hourly, classifies, drafts replies, escalates the serious ones |
 
 ### Kitchen & KDS
-| Agent | What it does |
-|---|---|
-| **Dynamic Prep Forecaster** | Forecasts per-item demand, explodes it to ingredient quantities, grosses up for yield loss, scores yesterday and corrects |
-| **Order Routing & Pacing** | Routes lines to stations and back-times each so a table's plates land together |
+| Name | Agent | What it does |
+|---|---|---|
+| **Betrisha** | Dynamic Prep Forecaster | Forecasts per-item demand, explodes it to ingredient quantities, grosses up for yield loss, scores yesterday and corrects |
+| **Ciknor** | Order Routing & Pacing | Routes lines to stations and back-times each so a table's plates land together |
 
 ### Supply Chain
-| Agent | What it does |
-|---|---|
-| **Stock Tracking & Auto-Reorder** | Recalculates reorder points from real usage and drafts POs when stock trips them — **approval-gated** |
-| **Supplier & Invoice** | Three-way match of PO, goods receipt and invoice; catches price creep — **approval-gated** |
+| Name | Agent | What it does |
+|---|---|---|
+| **Rain** | Stock Tracking & Auto-Reorder | Recalculates reorder points from real usage and drafts POs when stock trips them — **approval-gated** |
+| **Suri** | Supplier & Invoice | Three-way match of PO, goods receipt and invoice; catches price creep — **approval-gated** |
 
 ### Marketing & Revenue
-| Agent | What it does |
-|---|---|
-| **Social Media & Content** | Writes and schedules posts; builds win-back offers for dormant diners |
-| **Dynamic Pricing & Menu Engineering** | Star/Plowhorse/Puzzle/Dog classification and guardrailed price proposals — **approval-gated** |
+| Name | Agent | What it does |
+|---|---|---|
+| **Franky** | Social Media & Content | Writes and schedules posts; builds win-back offers for dormant diners |
+| **Irma** | Dynamic Pricing & Menu Engineering | Star/Plowhorse/Puzzle/Dog classification and guardrailed price proposals — **approval-gated** |
 
 ### Workforce
-| Agent | What it does |
-|---|---|
-| **Shift Scheduling** | Shapes shifts against the hourly demand curve and fits a roster inside availability, hours caps and rest rules |
-| **Staff Assistant & Onboarding** | Answers SOP and recipe questions; validates and routes shift swaps |
+| Name | Agent | What it does |
+|---|---|---|
+| **Henry** | Shift Scheduling | Shapes shifts against the hourly demand curve and fits a roster inside availability, hours caps and rest rules |
+| **Kaksu** | Staff Assistant & Onboarding | Answers SOP and recipe questions; validates and routes shift swaps |
 
 ### Finance
-| Agent | What it does |
-|---|---|
-| **Bookkeeping & Reconciliation** | Squares POS takings against card settlements, platform payouts and the bank; posts double-entry journals |
-| **Daily Performance** | Prime cost, labour ratio, food cost, operating margin, and what moved them |
+| Name | Agent | What it does |
+|---|---|---|
+| **Emil** | Bookkeeping & Reconciliation | Squares POS takings against card settlements, platform payouts and the bank; posts double-entry journals |
+| **Camelia** | Daily Performance | Prime cost, labour ratio, food cost, operating margin, and what moved them |
 
 ---
 

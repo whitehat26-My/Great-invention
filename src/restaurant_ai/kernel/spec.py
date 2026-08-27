@@ -107,6 +107,13 @@ class AgentSpec:
     title: str
     description: str
     system_prompt: str
+    # What the agent is called. `name` is the slug everything keys off — the
+    # CLI, the Celery schedule, every audit row — so it does not move. `person`
+    # is what a human sees: an approval that reads "Rain is asking for MYR
+    # 172.50 of flour" is easier to act on at 6am than one that reads
+    # "stock_reorder". Defaulted so a throwaway spec in a test need not invent
+    # one; the registry test is what holds the real thirteen to it.
+    person: str = ""
     tools: list[ToolSpec] = field(default_factory=list)
     model_tier: ModelTier = "conversational"
     # Loads the agent's read-only view of the world. No LLM, no writes.

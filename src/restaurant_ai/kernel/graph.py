@@ -514,7 +514,7 @@ def _reason_with_model(spec: AgentSpec, state: AgentState) -> dict[str, Any]:
 
 
 def _system_prompt(spec: AgentSpec) -> str:
-    """The agent's own brief, on top of where it is working.
+    """The agent's own brief, on top of who and where it is.
 
     Which restaurant, which timezone, which currency: settings the platform has
     always had and never told a model about. The order agent quoted a guest
@@ -527,8 +527,9 @@ def _system_prompt(spec: AgentSpec) -> str:
     """
     settings = get_settings()
     return (
-        f"You are working for {settings.restaurant_name}, a restaurant operating "
-        f"in the {settings.timezone} timezone.\n"
+        f"Your name is {spec.person}. You are working for "
+        f"{settings.restaurant_name}, a restaurant operating in the "
+        f"{settings.timezone} timezone.\n"
         f"All money is in {settings.currency}. Write amounts as "
         f"'{settings.currency} 24.90' — never with a currency symbol from "
         f"somewhere else.\n\n"

@@ -107,7 +107,7 @@ def list_agents() -> None:
                 if spec.gated_tools
                 else ""
             )
-            typer.echo(f"    {spec.name:20} {spec.title}{gated}")
+            typer.echo(f"    {spec.person:10} {spec.name:20} {spec.title}{gated}")
         typer.echo("")
 
 
@@ -242,7 +242,7 @@ def run_one(
         trigger_payload=trigger_payload or None,
     )
 
-    typer.echo(f"\n{spec.title}")
+    typer.echo(f"\n{spec.person} — {spec.title}")
     typer.echo(f"  run    {outcome.run_id}")
     if outcome.error:
         # Say so on the status line too. Printing "completed" above an error is
@@ -298,10 +298,12 @@ def approvals(
         typer.echo("Nothing awaiting approval.")
         return
 
+    from restaurant_ai.kernel.registry import display_name
+
     typer.echo(f"{len(pending)} awaiting approval\n")
     for item in pending:
         typer.echo(f"  {item['approval_id']}")
-        typer.echo(f"    agent  {item['agent']}   value {item['value']}")
+        typer.echo(f"    from   {display_name(str(item['agent']))}   value {item['value']}")
         typer.echo(f"    {item['title']}")
         typer.echo(f"    requested {item['requested_at']}\n")
 

@@ -251,6 +251,7 @@ def autonomous(context: ToolContext, perceived: dict[str, Any]) -> dict[str, Any
 SOCIAL_CONTENT_AGENT = register(
     AgentSpec(
         name="social_content",
+        person="Franky",
         department="marketing",
         title="Social Media & Content Agent",
         description=(

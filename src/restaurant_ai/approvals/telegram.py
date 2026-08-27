@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from restaurant_ai.config import get_settings
+from restaurant_ai.kernel.registry import display_name
 from restaurant_ai.logging_setup import get_logger
 
 log = get_logger(__name__)
@@ -39,7 +40,7 @@ def build_message(request: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
     text = (
         f"*Approval needed*\n"
-        f"Agent: `{request.get('agent_name')}`\n"
+        f"Agent: `{display_name(str(request.get('agent_name')))}`\n"
         f"Value: *{value:,.2f}*\n\n"
         f"{request.get('title')}\n\n"
         f"```\n{detail}\n```"

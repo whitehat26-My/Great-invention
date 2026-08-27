@@ -203,3 +203,45 @@ class TestApprovalGates:
         )
         assert sent, "approval must actually transmit the order"
         assert all(o.approved_by == "aishah" for o in sent)
+
+
+class TestNames:
+    """Every agent is a person to whoever has to act on what it asks for."""
+
+    def test_all_thirteen_have_one(self):
+        missing = [n for n, s in all_agents().items() if not s.person]
+        assert missing == [], f"unnamed: {', '.join(sorted(missing))}"
+
+    def test_the_names_are_distinct(self):
+        people = [s.person for s in all_agents().values()]
+        assert len(set(people)) == len(people), "two agents answering to one name"
+
+    def test_the_slug_is_still_the_key(self):
+        """`name` is what the CLI, the schedule and every audit row key off.
+
+        Naming an agent must not move it — a renamed slug orphans its whole run
+        history, which is the record of what it has already been allowed to do.
+        """
+        for slug, spec in all_agents().items():
+            assert spec.name == slug
+            assert spec.name.islower() and " " not in spec.name
+
+    def test_an_approval_says_who_is_asking(self):
+        from restaurant_ai.kernel.registry import display_name
+
+        label = display_name("stock_reorder")
+        assert label.startswith("Rain")
+        assert "Stock Tracking" in label
+
+    def test_an_unknown_agent_still_renders(self):
+        # A stale approval row from a retired agent must not raise inside a
+        # Slack card. Degrade to the slug.
+        from restaurant_ai.kernel.registry import display_name
+
+        assert display_name("retired_agent") == "retired_agent"
+
+    def test_the_agent_is_told_its_own_name(self):
+        from restaurant_ai.kernel.graph import _system_prompt
+
+        for spec in all_agents().values():
+            assert f"Your name is {spec.person}." in _system_prompt(spec)

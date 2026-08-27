@@ -275,6 +275,7 @@ _price_tool.commit_fn = commit_price_changes  # type: ignore[attr-defined]
 MENU_PRICING_AGENT = register(
     AgentSpec(
         name="menu_pricing",
+        person="Irma",
         department="marketing",
         title="Dynamic Pricing & Menu Engineering Agent",
         description=(

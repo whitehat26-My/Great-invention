@@ -360,6 +360,7 @@ _respond_tool.commit_fn = commit_responses  # type: ignore[attr-defined]
 REPUTATION_AGENT = register(
     AgentSpec(
         name="reputation",
+        person="Aziera",
         department="front_of_house",
         title="Feedback & Reputation Agent",
         description=(
