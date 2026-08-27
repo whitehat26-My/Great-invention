@@ -205,7 +205,7 @@ Docker daemon.
 make api         # FastAPI webhook receiver on :8000
 make worker      # Celery worker
 make beat        # Celery beat — the operating rhythm below
-make test        # 525 tests
+make test        # 538 tests
 make check       # everything CI runs: lint, format, typecheck, tests
 ```
 
@@ -355,10 +355,18 @@ src/restaurant_ai/
 
 ## Testing
 
-493 tests, run on every push and pull request by
+538 tests, run on every push and pull request by
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml). `pytest` runs them all
 against a real PostgreSQL with no API key and no network — if CI ever needs a
 secret to pass, the deterministic path has regressed.
+
+That includes the live-model path. `tests/test_live_reasoning.py` drives it
+through a stub model that returns what the test tells it to and records what it
+was shown, so a tool the model chose, the result it gets back, a two-step plan,
+the iteration cap and the approval gate are all covered without a key. It cannot
+check whether Claude chooses *well* — only that what it chooses is carried out
+and that what comes back is true. The path had rotted to the point of being
+unreachable precisely because nothing exercised it.
 
 CI does four things beyond the suite: checks formatting (so `make fmt` and CI
 cannot disagree), typechecks, replays a full simulated service day through the
