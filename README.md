@@ -28,8 +28,8 @@ from a model's impression of how much coconut milk feels right. The model's job
 is to read the situation, choose the action, and explain it to a human.
 
 The second decision, which follows from the first: **an agent proposes; a human
-disposes.** Four agents can spend money or publish something public, and all
-four stop.
+disposes.** Five agents can spend money or publish something public, and all
+five stop.
 
 ---
 
@@ -40,7 +40,7 @@ four stop.
 |---|---|---|
 | **Freddy** | Reservation & Table Management | Takes bookings from WhatsApp, web and phone; seats parties on the tightest-fitting table; flags tables running past their turn |
 | **Melissa** | Conversational Order | Phone, drive-thru and kiosk orders; interprets dietary requests against the actual recipe; routes to the POS |
-| **Aziera** | Feedback & Reputation | Sweeps Google/social hourly, classifies, drafts replies, escalates the serious ones |
+| **Aziera** | Feedback & Reputation | Sweeps Google/social hourly, classifies, drafts replies, escalates the serious ones — **approval-gated** |
 
 ### Kitchen & KDS
 | Name | Agent | What it does |
@@ -57,7 +57,7 @@ four stop.
 ### Marketing & Revenue
 | Name | Agent | What it does |
 |---|---|---|
-| **Franky** | Social Media & Content | Writes and schedules posts; builds win-back offers for dormant diners |
+| **Franky** | Social Media & Content | Drafts posts and win-back offers for dormant diners — **approval-gated** |
 | **Irma** | Dynamic Pricing & Menu Engineering | Star/Plowhorse/Puzzle/Dog classification and guardrailed price proposals — **approval-gated** |
 
 ### Workforce
@@ -96,6 +96,15 @@ perceive ─→ reason ─→ act ─┬─ nothing gated ───┴───�
 Splitting `act` from `commit` is the point. Preparing an action and performing
 it are separate steps with a human in between, and the agent has no path from
 one to the other.
+
+The split has to be real, though, and twice it was not. A gated tool that does
+its own publishing inside `act` has already acted by the time anyone sees the
+proposal — Franky scheduled posts straight to the platforms, harmless only
+because `SOCIAL_PROVIDER` defaults to `fake`. And a `gate_when` narrower than
+what its tool can change lets the rest through: Irma gated on price changes,
+so three bundles went out unapproved. A drafted post now carries no
+`external_ref` and a drafted offer no `issued_count`, which is what makes
+prepared distinguishable from done without a status column to forget to set.
 
 The loop back from `act` to `reason` exists only on the live-model path, and it
 is the difference between an agent and a one-shot planner. A model that never
@@ -136,8 +145,9 @@ Hock Seng Dry Goods (PO-260827-001) — 4093.80, deliver 2026-09-01
 Every line says what is on hand, how many days that covers, and what it is
 ordering to reach. The human can judge it without opening a database.
 
-Gated by default: purchase orders, supplier payments, menu price changes,
-replies to poor reviews, and anything over `APPROVAL_VALUE_THRESHOLD`. Policy
+Gated by default: purchase orders, supplier payments, menu price changes and
+bundles, replies to poor reviews, social posts, win-back offers, and anything
+over `APPROVAL_VALUE_THRESHOLD`. Policy
 lives on the tool, not in agent code, so "this needs a human" is a property of
 the action and cannot be forgotten by the next agent that performs it.
 
