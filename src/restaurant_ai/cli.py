@@ -174,6 +174,31 @@ def telegram_check(
         typer.echo("  Message your bot, then read the chat id from getUpdates.", err=True)
         raise typer.Exit(code=1)
 
+    # Resolve the id before trusting it. A chat id is a bare number with nothing
+    # self-validating about it, so a typo — or a placeholder copied out of a
+    # runbook — reads as configured right up until the send fails with the
+    # unhelpful "chat not found".
+    from restaurant_ai.approvals.telegram import TelegramRejected, describe_chat
+
+    try:
+        chat = describe_chat(settings.telegram_chat_id)
+    except TelegramRejected as exc:
+        typer.echo(f"\n  chat {settings.telegram_chat_id} does not exist ({exc}).", err=True)
+        typer.echo("  Two usual causes:", err=True)
+        typer.echo("    - the id is a placeholder or a typo. It is ~10 digits.", err=True)
+        typer.echo("    - you have not messaged the bot yet, so no chat exists.", err=True)
+        typer.echo(
+            "  Find it: curl https://api.telegram.org/bot<token>/getUpdates "
+            'and read "chat":{"id": ...}',
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        typer.echo(f"\n  could not check the chat  {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"  chat       {chat['name']} ({chat['type']})")
+
     try:
         api(
             "sendMessage",

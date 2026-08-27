@@ -230,3 +230,61 @@ class TestFailuresAreDistinguishable:
         monkeypatch.setattr(tg.httpx, "post", lambda *a, **kw: HtmlPage())
         with pytest.raises(tg.TelegramUnreachable, match="instead of Telegram"):
             tg.api("getMe")
+
+
+class TestTheChatIdIsCheckedBeforeItIsTrusted:
+    """A chat id is a bare number with nothing self-validating about it.
+
+    `telegram-check` printed `chat id 123456789` — a placeholder pasted
+    literally out of a runbook — and only fell over at the send, with Telegram's
+    "chat not found". The number looked configured because nothing had asked
+    whether it existed.
+    """
+
+    def test_a_real_chat_resolves_to_a_name(self, telegram, monkeypatch):
+        from restaurant_ai.approvals import telegram as tg
+
+        monkeypatch.setattr(
+            tg,
+            "api",
+            lambda method, **kw: {
+                "ok": True,
+                "result": {"id": 1013758071, "type": "private", "first_name": "mellow"},
+            },
+        )
+        described = tg.describe_chat("1013758071")
+        assert described == {"id": 1013758071, "type": "private", "name": "mellow"}
+
+    def test_a_group_uses_its_title(self, telegram, monkeypatch):
+        from restaurant_ai.approvals import telegram as tg
+
+        monkeypatch.setattr(
+            tg,
+            "api",
+            lambda method, **kw: {
+                "ok": True,
+                "result": {"id": -100, "type": "group", "title": "Kitchen approvals"},
+            },
+        )
+        assert tg.describe_chat("-100")["name"] == "Kitchen approvals"
+
+    def test_a_placeholder_id_is_refused_by_telegram(self, telegram, monkeypatch):
+        from restaurant_ai.approvals import telegram as tg
+
+        class NotFound:
+            status_code = 400
+
+            def json(self):
+                return {"ok": False, "description": "Bad Request: chat not found"}
+
+        monkeypatch.setattr(tg.httpx, "post", lambda *a, **kw: NotFound())
+        with pytest.raises(tg.TelegramRejected, match="chat not found"):
+            tg.describe_chat("123456789")
+
+    def test_a_chat_with_no_name_at_all_still_resolves(self, telegram, monkeypatch):
+        from restaurant_ai.approvals import telegram as tg
+
+        monkeypatch.setattr(
+            tg, "api", lambda method, **kw: {"ok": True, "result": {"id": 5, "type": "private"}}
+        )
+        assert tg.describe_chat("5")["name"] == "unnamed"

@@ -339,8 +339,14 @@ integration that needs **no hosting at all**.
 3. Set `TELEGRAM_BOT_TOKEN`, `APPROVAL_CHANNEL=telegram`, and
    `APPROVAL_API_KEY` (any long random string — `python -c "import secrets;
    print(secrets.token_urlsafe(32))"`).
-4. `restaurant-ai telegram-check` — confirms the token, names the bot, and sends
-   a test card. It also tells you `TELEGRAM_CHAT_ID` if it is not set yet.
+4. `restaurant-ai telegram-check` — confirms the token, names the bot, resolves
+   `TELEGRAM_CHAT_ID` to whoever is on the other end, and sends a test card.
+
+   Find the chat id by messaging the bot and reading `"chat":{"id": ...}` from
+   `https://api.telegram.org/bot<token>/getUpdates`. It is around ten digits.
+   The check resolves it to a name before sending, so a typo or a copied
+   placeholder is caught while you are configuring rather than at the moment
+   the first real approval fails to arrive.
 5. `restaurant-ai telegram-listen` — takes decisions. Leave it running.
 
 That is the whole setup. No public URL, no TLS certificate, no DNS: the listener

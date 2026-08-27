@@ -198,6 +198,24 @@ def describe_bot() -> dict[str, Any]:
     }
 
 
+def describe_chat(chat_id: str) -> dict[str, Any]:
+    """Resolve a chat id to whoever is actually on the other end.
+
+    A chat id is a bare number with nothing self-validating about it, so a typo
+    or a copied placeholder looks exactly like a real one until a send fails.
+    Checking it first turns "chat not found" at the moment of use into a name
+    you can recognise at the moment of configuring.
+    """
+    chat = api("getChat", chat_id=chat_id)["result"]
+    name = (
+        chat.get("title")
+        or " ".join(filter(None, [chat.get("first_name"), chat.get("last_name")]))
+        or chat.get("username")
+        or "unnamed"
+    )
+    return {"id": chat.get("id"), "type": chat.get("type"), "name": name}
+
+
 def answer_callback(callback_query_id: str, text: str) -> None:
     """Stop the button spinning, and say what happened.
 
