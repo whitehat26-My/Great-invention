@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push supersedes an in-flight run on the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: lint, typecheck, tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # The suite runs against a real PostgreSQL rather than SQLite: the schema
+    # uses JSONB, partial constraints and expression indexes SQLite cannot
+    # express, so an in-memory substitute would test something other than what
+    # ships. Ports match the defaults in config.py and scripts/dev_up.sh, so CI
+    # and a developer's machine are the same environment.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: restaurant
+          POSTGRES_PASSWORD: restaurant
+          POSTGRES_DB: restaurant_ai
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd="pg_isready -U restaurant -d restaurant_ai"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+      redis:
+        image: redis:7
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      # No API key and no network: every agent runs its deterministic path.
+      # If this ever needs a secret to pass, the platform has regressed.
+      LLM_PROVIDER: fake
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5433"
+      POSTGRES_USER: restaurant
+      POSTGRES_PASSWORD: restaurant
+      POSTGRES_DB: restaurant_ai
+      REDIS_HOST: localhost
+      REDIS_PORT: "6380"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache the virtualenv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py311-${{ hashFiles('pyproject.toml') }}
+
+      - name: Install
+        run: make install
+
+      - name: Migrate
+        run: make migrate
+
+      # Split rather than one `make check` so the failing step is obvious in the
+      # UI, and so a lint failure does not hide a test failure behind it.
+      - name: Lint
+        run: make lint
+
+      - name: Formatting
+        run: make fmt-check
+
+      - name: Typecheck
+        run: make typecheck
+
+      - name: Tests
+        run: make test
+
+      # The flagship claim is that a full service day runs end to end. The suite
+      # covers it, but running the CLI proves the entry point a person actually
+      # types still works.
+      - name: Simulated service day
+        run: |
+          make seed
+          .venv/bin/restaurant-ai simulate-day --auto-approve --quiet
+
+      - name: Migrations are reversible
+        run: |
+          .venv/bin/alembic downgrade base
+          .venv/bin/alembic upgrade head

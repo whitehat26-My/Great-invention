@@ -1,0 +1,68 @@
+# Normal workstation path. In sandboxes without a Docker daemon use
+# `scripts/dev_up.sh`, which brings up the same Postgres/Redis on the same ports.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-restaurant}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-restaurant}
+      POSTGRES_DB: ${POSTGRES_DB:-restaurant_ai}
+    ports: ["${POSTGRES_PORT:-5433}:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-restaurant} -d ${POSTGRES_DB:-restaurant_ai}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["${REDIS_PORT:-6380}:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    command: uvicorn restaurant_ai.api.main:app --host 0.0.0.0 --port 8000
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  worker:
+    build: .
+    command: celery -A restaurant_ai.worker.celery_app:celery_app worker -l info
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  beat:
+    build: .
+    command: celery -A restaurant_ai.worker.celery_app:celery_app beat -l info
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+volumes:
+  pgdata:
