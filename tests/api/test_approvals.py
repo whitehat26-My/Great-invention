@@ -38,11 +38,12 @@ def client(db):
 
 
 @pytest.fixture
-def parked(db):
+def parked(db, stock_is_low):
     """A stock_reorder run parked at its approval gate."""
     outcome = run_agent(get_agent("stock_reorder"), trigger="test")
-    if not outcome.interrupted:
-        pytest.skip("Nothing below reorder point in this dataset")
+    assert outcome.interrupted, (
+        "stock is below its reorder point, so the agent must propose a purchase order"
+    )
     return outcome
 
 

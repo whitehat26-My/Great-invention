@@ -123,12 +123,13 @@ class TestApprovalGates:
         assert tool.gate_when is not None, f"{agent_name}.{tool_name} would gate on empty results"
         assert tool.should_gate({}) is False
 
-    def test_stock_reorder_parks_with_an_actionable_request(self, db):
+    def test_stock_reorder_parks_with_an_actionable_request(self, db, stock_is_low):
         spec = get_agent("stock_reorder")
         with ephemeral_checkpointer() as cp:
             outcome = run_agent(spec, trigger="test", checkpointer=cp)
-        if not outcome.interrupted:
-            pytest.skip("Nothing below reorder point in this dataset")
+        assert outcome.interrupted, (
+            "stock is below its reorder point, so the agent must propose a purchase order"
+        )
 
         proposal = outcome.interrupt_payload["proposals"][0]
         assert Decimal(proposal["value"]) > 0
@@ -137,14 +138,13 @@ class TestApprovalGates:
         assert "on hand" in proposal["detail"]
         assert "reorder point" in proposal["detail"]
 
-    def test_rejecting_a_purchase_order_leaves_nothing_sent(self, db):
+    def test_rejecting_a_purchase_order_leaves_nothing_sent(self, db, stock_is_low):
         from restaurant_ai.db.models import PurchaseOrder, PurchaseOrderStatus
 
         spec = get_agent("stock_reorder")
         with ephemeral_checkpointer() as cp:
             outcome = run_agent(spec, trigger="test", checkpointer=cp)
-            if not outcome.interrupted:
-                pytest.skip("Nothing below reorder point in this dataset")
+            assert outcome.interrupted, "a short ingredient must produce a proposal"
             resume_agent(
                 spec, outcome.thread_id, {"approved": False, "by": "manager"}, checkpointer=cp
             )
@@ -162,14 +162,13 @@ class TestApprovalGates:
         )
         assert sent == [], "a rejected order must never reach the supplier"
 
-    def test_approving_a_purchase_order_sends_it(self, db):
+    def test_approving_a_purchase_order_sends_it(self, db, stock_is_low):
         from restaurant_ai.db.models import PurchaseOrder, PurchaseOrderStatus
 
         spec = get_agent("stock_reorder")
         with ephemeral_checkpointer() as cp:
             outcome = run_agent(spec, trigger="test", checkpointer=cp)
-            if not outcome.interrupted:
-                pytest.skip("Nothing below reorder point in this dataset")
+            assert outcome.interrupted, "a short ingredient must produce a proposal"
             resumed = resume_agent(
                 spec, outcome.thread_id, {"approved": True, "by": "aishah"}, checkpointer=cp
             )

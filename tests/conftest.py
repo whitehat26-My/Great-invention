@@ -91,3 +91,86 @@ def db(engine: Engine, seeded: None, monkeypatch: pytest.MonkeyPatch) -> Iterato
         session.close()
         transaction.rollback()
         connection.close()
+
+
+@pytest.fixture
+def stock_is_low(db) -> None:
+    """Guarantee at least one ingredient sits below its reorder point.
+
+    The purchase-order approval tests used to depend on whatever the database
+    happened to hold, and skipped when it held enough stock. A test that
+    silently stops running is not protecting anything — and these cover the gate
+    between an agent proposing a purchase and money being spent.
+
+    Drains the chicken to almost nothing and pins a reorder policy that
+    guarantees a trigger, inside the test transaction.
+    """
+    from decimal import Decimal
+
+    from sqlalchemy import func, select
+
+    from restaurant_ai import clock
+    from restaurant_ai.db.models import (
+        Ingredient,
+        MovementReason,
+        PurchaseOrder,
+        PurchaseOrderStatus,
+        ReorderPolicy,
+        StockMovement,
+    )
+
+    # Ignore inbound stock from any order already in flight.
+    db.execute(
+        PurchaseOrder.__table__.update()
+        .where(
+            PurchaseOrder.status.in_(
+                [
+                    PurchaseOrderStatus.APPROVED,
+                    PurchaseOrderStatus.SENT,
+                    PurchaseOrderStatus.PARTIALLY_RECEIVED,
+                ]
+            )
+        )
+        .values(status=PurchaseOrderStatus.RECEIVED)
+    )
+
+    ingredient = db.execute(
+        select(Ingredient).where(Ingredient.code == "ING-CHKN-THI")
+    ).scalar_one()
+
+    on_hand = Decimal(
+        str(
+            db.execute(
+                select(func.coalesce(func.sum(StockMovement.quantity), 0)).where(
+                    StockMovement.ingredient_id == ingredient.id
+                )
+            ).scalar_one()
+        )
+    )
+    # Leave a token amount so it reads as "nearly out", not "never stocked".
+    if on_hand > Decimal("100"):
+        db.add(
+            StockMovement(
+                ingredient_id=ingredient.id,
+                quantity=-(on_hand - Decimal("100")),
+                reason=MovementReason.COUNT_ADJUSTMENT,
+                unit_cost=ingredient.cost_per_base_unit,
+                occurred_at=clock.now(),
+                source_type="test_fixture",
+                source_id="stock_is_low",
+                note="Drained by the stock_is_low fixture",
+            )
+        )
+
+    policy = db.execute(
+        select(ReorderPolicy).where(ReorderPolicy.ingredient_id == ingredient.id)
+    ).scalar_one_or_none()
+    if policy is None:
+        policy = ReorderPolicy(ingredient_id=ingredient.id)
+        db.add(policy)
+    policy.avg_daily_usage = Decimal("2000")
+    policy.usage_stddev = Decimal("250")
+    policy.reorder_point = Decimal("5000")
+    policy.safety_stock = Decimal("500")
+    policy.target_days_cover = 7
+    db.flush()
