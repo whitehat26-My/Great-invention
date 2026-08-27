@@ -250,6 +250,7 @@ def autonomous(context: ToolContext, perceived: dict[str, Any]) -> dict[str, Any
 SHIFT_SCHEDULING_AGENT = register(
     AgentSpec(
         name="shift_scheduling",
+        person="Henry",
         department="workforce",
         title="Shift Scheduling Agent",
         description=(

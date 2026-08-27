@@ -535,6 +535,7 @@ _payment_tool.commit_fn = commit_payment  # type: ignore[attr-defined]
 SUPPLIER_INVOICE_AGENT = register(
     AgentSpec(
         name="supplier_invoice",
+        person="Suri",
         department="supply",
         title="Supplier & Invoice Agent",
         description=(

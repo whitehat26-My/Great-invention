@@ -86,12 +86,13 @@ def perceive(context: ToolContext) -> dict[str, Any]:
 
 
 def schedule_content(context: ToolContext, posts: int = 3, days_ahead: int = 3) -> dict[str, Any]:
-    """Write and schedule promotional posts, featuring what needs promoting."""
-    from restaurant_ai.integrations import get_integrations
-    from restaurant_ai.integrations.base import ScheduledPost
+    """Draft promotional posts featuring what needs promoting. Approval-gated.
 
+    Writes the posts and stops. Nothing reaches a platform until a human
+    approves: the rows land with no ``external_ref``, which is what makes a
+    drafted post distinguishable from a published one without a status column.
+    """
     session = context.session
-    social = get_integrations().social
 
     # Puzzles first: high margin, low awareness is exactly what marketing fixes.
     candidates = list(
@@ -125,7 +126,7 @@ def schedule_content(context: ToolContext, posts: int = 3, days_ahead: int = 3) 
         body = templates[index % len(templates)].format(
             name=item.name,
             description=(item.description or "").rstrip("."),
-            price=f"RM{item.price}",
+            price=f"{get_settings().currency_symbol}{item.price}",
         )
         platform = PLATFORMS[index % len(PLATFORMS)]
         when = clock.now() + timedelta(days=(index % max(days_ahead, 1)), hours=11)
@@ -140,11 +141,9 @@ def schedule_content(context: ToolContext, posts: int = 3, days_ahead: int = 3) 
         session.add(post)
         session.flush()
 
-        ref = social.schedule_post(ScheduledPost(platform=platform, body=body, scheduled_for=when))
-        post.external_ref = ref
-
         scheduled.append(
             {
+                "post_id": post.id,
                 "platform": platform,
                 "featuring": item.name,
                 "menu_class": angle_key,
@@ -164,10 +163,42 @@ def schedule_content(context: ToolContext, posts: int = 3, days_ahead: int = 3) 
     return {"scheduled": len(scheduled), "posts": scheduled}
 
 
+def publish_content(context: ToolContext, payload: dict[str, Any]) -> dict[str, Any]:
+    """Send the approved posts to the platforms. Runs only after a human says yes."""
+    from restaurant_ai.integrations import get_integrations
+    from restaurant_ai.integrations.base import ScheduledPost
+
+    session = context.session
+    social = get_integrations().social
+    published: list[str] = []
+
+    for entry in payload.get("posts") or []:
+        post = session.get(SocialPost, entry.get("post_id"))
+        if post is None or post.external_ref:
+            continue  # already out, or gone; never publish the same post twice
+        post.external_ref = social.schedule_post(
+            ScheduledPost(platform=post.platform, body=post.body, scheduled_for=post.scheduled_for)
+        )
+        published.append(post.id)
+
+    session.flush()
+    return {
+        "published": len(published),
+        "post_ids": published,
+        "approved_by": payload.get("approved_by"),
+    }
+
+
 def build_reengagement(
     context: ToolContext, dormant_days: int = 45, discount_pct: str = "0.15"
 ) -> dict[str, Any]:
-    """Create a win-back offer for guests who have stopped visiting."""
+    """Draft a win-back offer for guests who have stopped visiting. Approval-gated.
+
+    The offer is written with ``issued_count`` at zero — it exists, and it has
+    reached nobody. A discount the restaurant honours for thirty days is a
+    commercial commitment of the same kind as a price change, and Irma's price
+    moves already stop for a human.
+    """
     session = context.session
     cutoff = context.business_date - timedelta(days=dormant_days)
 
@@ -204,7 +235,7 @@ def build_reengagement(
         valid_from=context.business_date,
         valid_to=context.business_date + timedelta(days=30),
         segment="dormant",
-        issued_count=len(dormant),
+        issued_count=0,
         run_id=context.run_id,
     )
     session.add(offer)
@@ -212,6 +243,7 @@ def build_reengagement(
 
     lifetime_value = sum((g.lifetime_value for g in dormant), ZERO)
     return {
+        "offer_id": offer.id,
         "issued": len(dormant),
         "code": code,
         "discount_pct": discount_pct,
@@ -219,8 +251,24 @@ def build_reengagement(
         "segment_lifetime_value": str(lifetime_value),
         "note": (
             f"{len(dormant)} opted-in guest(s) have not visited since {cutoff}. "
-            f"Offer {code} issued, valid 30 days."
+            f"Offer {code} drafted, valid 30 days once approved."
         ),
+    }
+
+
+def issue_offer(context: ToolContext, payload: dict[str, Any]) -> dict[str, Any]:
+    """Put the approved offer in front of the segment it was drafted for."""
+    session = context.session
+    offer = session.get(PromoOffer, payload.get("offer_id"))
+    if offer is None:
+        return {"issued": 0, "note": "The drafted offer no longer exists."}
+
+    offer.issued_count = int(payload.get("issued") or 0)
+    session.flush()
+    return {
+        "issued": offer.issued_count,
+        "code": offer.code,
+        "approved_by": payload.get("approved_by"),
     }
 
 
@@ -248,9 +296,57 @@ def autonomous(context: ToolContext, perceived: dict[str, Any]) -> dict[str, Any
     }
 
 
+_content_tool = ToolSpec(
+    name="schedule_content",
+    description=(
+        "Draft promotional posts featuring what needs promoting. Requires human "
+        "approval before anything is published."
+    ),
+    fn=schedule_content,
+    args_schema=ContentArgs,
+    requires_approval=True,
+    gate_when=lambda r: r.get("scheduled", 0) > 0,
+    approval_summary=lambda r: f"{r['scheduled']} post(s) to publish",
+    approval_detail=lambda r: "\n\n".join(
+        f"{p['platform']} — {p['scheduled_for'][:16]}\n{p['body']}\n({p['why']})"
+        for p in r.get("posts", [])
+    ),
+)
+_content_tool.commit_fn = publish_content  # type: ignore[attr-defined]
+
+
+_reengagement_tool = ToolSpec(
+    name="build_reengagement",
+    description=(
+        "Draft a win-back offer for guests who have stopped visiting. Requires "
+        "human approval before it is issued to anyone."
+    ),
+    fn=build_reengagement,
+    args_schema=ReengageArgs,
+    requires_approval=True,
+    gate_when=lambda r: r.get("issued", 0) > 0,
+    # The exposure is the discount against what that segment is worth, which is
+    # the number that decides whether this is worth doing.
+    approval_value=lambda r: (
+        Decimal(str(r.get("segment_lifetime_value", "0")))
+        * Decimal(str(r.get("discount_pct", "0")))
+    ),
+    approval_summary=lambda r: (
+        f"{r['code']}: {Decimal(str(r['discount_pct'])) * 100:.0f}% off to "
+        f"{r['issued']} dormant guest(s)"
+    ),
+    approval_detail=lambda r: (
+        f"{r['note']}\n"
+        f"Segment lifetime value {r['segment_lifetime_value']}; valid to {r['valid_to']}."
+    ),
+)
+_reengagement_tool.commit_fn = issue_offer  # type: ignore[attr-defined]
+
+
 SOCIAL_CONTENT_AGENT = register(
     AgentSpec(
         name="social_content",
+        person="Franky",
         department="marketing",
         title="Social Media & Content Agent",
         description=(
@@ -269,18 +365,8 @@ SOCIAL_CONTENT_AGENT = register(
         ),
         model_tier="conversational",
         tools=[
-            ToolSpec(
-                name="schedule_content",
-                description="Write and schedule promotional posts featuring what needs promoting.",
-                fn=schedule_content,
-                args_schema=ContentArgs,
-            ),
-            ToolSpec(
-                name="build_reengagement",
-                description="Create a win-back offer for guests who have stopped visiting.",
-                fn=build_reengagement,
-                args_schema=ReengageArgs,
-            ),
+            _content_tool,
+            _reengagement_tool,
         ],
         perceive=perceive,
         autonomous=autonomous,

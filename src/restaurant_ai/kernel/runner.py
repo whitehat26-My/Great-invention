@@ -25,7 +25,7 @@ from restaurant_ai import clock
 from restaurant_ai.config import get_settings
 from restaurant_ai.db.base import session_scope
 from restaurant_ai.db.models import AgentRunStatus
-from restaurant_ai.kernel import audit
+from restaurant_ai.kernel import audit, llm
 from restaurant_ai.kernel.graph import build_graph, format_exception
 from restaurant_ai.kernel.spec import AgentSpec
 from restaurant_ai.kernel.state import initial_state
@@ -158,15 +158,12 @@ def run_agent(
     thread_id = audit.new_thread_id(spec.name, business_date)
 
     settings = get_settings()
-    model_name = (
-        "fake"
-        if settings.llm_provider == "fake"
-        else (
-            settings.model_reasoning
-            if spec.model_tier == "reasoning"
-            else settings.model_conversational
-        )
-    )
+    # Ask the module that builds the client, rather than reading the Anthropic
+    # settings and hoping. This read `settings.model_reasoning` whatever the
+    # provider, so every Gemini run was filed in the audit trail as
+    # `claude-opus-5` — the one column that answers "which model decided this?"
+    # was wrong for any provider but the first one.
+    model_name = "fake" if settings.llm_provider == "fake" else llm.model_name(spec.model_tier)
 
     with session_scope() as session:
         run = audit.start_run(

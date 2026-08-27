@@ -100,28 +100,68 @@ class TestEveryAgentRuns:
 
 
 class TestApprovalGates:
-    """The four agents that can spend money or publish must stop for a human."""
+    """Every agent that can spend money or publish must stop for a human."""
 
-    GATED = {
-        "stock_reorder": "draft_purchase_orders",
-        "supplier_invoice": "release_payment",
-        "menu_pricing": "propose_changes",
-        "reputation": "draft_responses",
-    }
+    # A list, not a dict: one agent can have more than one gated tool, and
+    # Franky has two.
+    GATED = [
+        ("stock_reorder", "draft_purchase_orders"),
+        ("supplier_invoice", "release_payment"),
+        ("menu_pricing", "propose_changes"),
+        ("reputation", "draft_responses"),
+        ("social_content", "schedule_content"),
+        ("social_content", "build_reengagement"),
+    ]
 
-    @pytest.mark.parametrize(("agent_name", "tool_name"), sorted(GATED.items()))
+    def test_nothing_reaches_the_public_unsupervised(self):
+        """The architecture's whole claim, checked against every tool.
+
+        Franky scheduled posts straight to the platforms with no gate at all,
+        while Aziera's review replies and Irma's price moves both stopped for
+        someone. It was harmless only because SOCIAL_PROVIDER defaults to fake
+        — set it live and he posted on his own.
+        """
+        outward = {
+            ("social_content", "schedule_content"),
+            ("social_content", "build_reengagement"),
+            ("reputation", "draft_responses"),
+        }
+        for agent_name, tool_name in outward:
+            tool = get_agent(agent_name).tool(tool_name)
+            assert tool is not None, f"{agent_name}.{tool_name} is gone"
+            assert tool.requires_approval, (
+                f"{agent_name}.{tool_name} reaches guests or the public unsupervised"
+            )
+
+    @pytest.mark.parametrize(("agent_name", "tool_name"), GATED)
     def test_declares_its_gate(self, agent_name, tool_name):
         spec = get_agent(agent_name)
         tool = spec.tool(tool_name)
         assert tool is not None and tool.requires_approval
 
-    @pytest.mark.parametrize(("agent_name", "tool_name"), sorted(GATED.items()))
+    @pytest.mark.parametrize(("agent_name", "tool_name"), GATED)
     def test_does_not_ask_for_approval_of_nothing(self, agent_name, tool_name):
         # Waking someone to approve an empty purchase order or a zero-value
         # payment run is how people learn to rubber-stamp the ones that matter.
         tool = get_agent(agent_name).tool(tool_name)
         assert tool.gate_when is not None, f"{agent_name}.{tool_name} would gate on empty results"
         assert tool.should_gate({}) is False
+
+    def test_a_gate_covers_everything_its_tool_can_change(self):
+        """`gate_when` decides what escapes review, so it has to be exhaustive.
+
+        menu_pricing gated on `price_changes` alone. On the first live run the
+        model proposed no price moves and three bundles — each a change to what
+        the restaurant charges — and every one of them went through unapproved
+        while the run reported "completed".
+        """
+        gate = get_agent("menu_pricing").tool("propose_changes").gate_when
+        assert gate is not None
+        assert gate({"price_changes": 0, "bundles": 0}) is False
+        assert gate({"price_changes": 2, "bundles": 0}) is True
+        assert gate({"price_changes": 0, "bundles": 3}) is True, (
+            "bundles change what the restaurant charges and must face a human"
+        )
 
     def test_stock_reorder_parks_with_an_actionable_request(self, db, stock_is_low):
         spec = get_agent("stock_reorder")
@@ -187,3 +227,160 @@ class TestApprovalGates:
         )
         assert sent, "approval must actually transmit the order"
         assert all(o.approved_by == "aishah" for o in sent)
+
+
+class TestNames:
+    """Every agent is a person to whoever has to act on what it asks for."""
+
+    def test_all_thirteen_have_one(self):
+        missing = [n for n, s in all_agents().items() if not s.person]
+        assert missing == [], f"unnamed: {', '.join(sorted(missing))}"
+
+    def test_the_names_are_distinct(self):
+        people = [s.person for s in all_agents().values()]
+        assert len(set(people)) == len(people), "two agents answering to one name"
+
+    def test_the_slug_is_still_the_key(self):
+        """`name` is what the CLI, the schedule and every audit row key off.
+
+        Naming an agent must not move it — a renamed slug orphans its whole run
+        history, which is the record of what it has already been allowed to do.
+        """
+        for slug, spec in all_agents().items():
+            assert spec.name == slug
+            assert spec.name.islower() and " " not in spec.name
+
+    def test_an_approval_says_who_is_asking(self):
+        from restaurant_ai.kernel.registry import display_name
+
+        label = display_name("stock_reorder")
+        assert label.startswith("Rain")
+        assert "Stock Tracking" in label
+
+    def test_an_unknown_agent_still_renders(self):
+        # A stale approval row from a retired agent must not raise inside a
+        # Slack card. Degrade to the slug.
+        from restaurant_ai.kernel.registry import display_name
+
+        assert display_name("retired_agent") == "retired_agent"
+
+    def test_the_agent_is_told_its_own_name(self):
+        from restaurant_ai.kernel.graph import _system_prompt
+
+        for spec in all_agents().values():
+            assert f"Your name is {spec.person}." in _system_prompt(spec)
+
+
+class TestFrankyPublishesOnlyWhenTold:
+    """Drafting a post and publishing it are separate steps with a human between.
+
+    `schedule_content` used to call the platform inside the tool, so the post
+    was out before anyone saw it. A drafted post now has no `external_ref`;
+    that is what tells it apart from a published one.
+    """
+
+    def test_drafting_does_not_publish(self, db):
+        from restaurant_ai.db.models import SocialPost
+
+        spec = get_agent("social_content")
+        with ephemeral_checkpointer() as cp:
+            outcome = run_agent(spec, trigger="test", checkpointer=cp)
+
+        assert outcome.interrupted, "posts must face a human before they go out"
+        drafted = (
+            db.execute(select(SocialPost).where(SocialPost.run_id == outcome.run_id))
+            .scalars()
+            .all()
+        )
+        assert drafted, "the posts should have been written"
+        assert all(p.external_ref is None for p in drafted), (
+            "a post reached the platform before anyone approved it"
+        )
+
+    def test_approving_publishes_them(self, db):
+        from restaurant_ai.db.models import SocialPost
+
+        spec = get_agent("social_content")
+        with ephemeral_checkpointer() as cp:
+            outcome = run_agent(spec, trigger="test", checkpointer=cp)
+            assert outcome.interrupted
+            resumed = resume_agent(
+                spec, outcome.thread_id, {"approved": True, "by": "sharif"}, checkpointer=cp
+            )
+
+        assert not resumed.interrupted
+        db.expire_all()
+        published = (
+            db.execute(select(SocialPost).where(SocialPost.run_id == outcome.run_id))
+            .scalars()
+            .all()
+        )
+        assert published, "the posts should still exist"
+        assert all(p.external_ref for p in published), "approval must actually publish them"
+
+    def test_the_card_carries_the_copy_a_human_has_to_judge(self):
+        tool = get_agent("social_content").tool("schedule_content")
+        result = {
+            "scheduled": 1,
+            "posts": [
+                {
+                    "post_id": "p1",
+                    "platform": "instagram",
+                    "scheduled_for": "2026-08-28T10:01:00",
+                    "body": "Tiger prawns, charred over flame.",
+                    "why": "High margin, low awareness.",
+                }
+            ],
+        }
+        assert "1 post(s)" in tool.summarise(result)
+        detail = tool.detail_of(result)
+        assert "Tiger prawns" in detail and "instagram" in detail
+
+    def test_an_offer_is_drafted_to_nobody(self, db):
+        """`issued_count` at zero is the draft marker: it exists, it reached no one."""
+        from restaurant_ai.db.models import PromoOffer
+
+        spec = get_agent("social_content")
+        with ephemeral_checkpointer() as cp:
+            outcome = run_agent(spec, trigger="test", checkpointer=cp)
+        offers = (
+            db.execute(select(PromoOffer).where(PromoOffer.run_id == outcome.run_id))
+            .scalars()
+            .all()
+        )
+        assert all(o.issued_count == 0 for o in offers)
+
+    def test_an_empty_run_asks_nobody(self):
+        for tool_name in ("schedule_content", "build_reengagement"):
+            tool = get_agent("social_content").tool(tool_name)
+            assert tool.should_gate({}) is False
+
+
+class TestCurrencyReadsRight:
+    def test_a_post_uses_the_symbol_not_the_iso_code(self, db):
+        """MYR belongs in a journal; RM belongs on a menu.
+
+        The symbol was hardcoded, so changing CURRENCY would have left posts
+        quoting ringgit in whatever the restaurant had moved to.
+        """
+        from restaurant_ai.config import get_settings
+        from restaurant_ai.db.models import SocialPost
+
+        spec = get_agent("social_content")
+        with ephemeral_checkpointer() as cp:
+            outcome = run_agent(spec, trigger="test", checkpointer=cp)
+        posts = (
+            db.execute(select(SocialPost).where(SocialPost.run_id == outcome.run_id))
+            .scalars()
+            .all()
+        )
+        assert posts
+        symbol = get_settings().currency_symbol
+        assert any(symbol in p.body for p in posts)
+
+    def test_the_symbol_and_the_code_are_both_configured(self):
+        from restaurant_ai.config import get_settings
+
+        settings = get_settings()
+        assert settings.currency and settings.currency_symbol
+        assert settings.currency != settings.currency_symbol

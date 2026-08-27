@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 
 import typer
@@ -106,8 +107,95 @@ def list_agents() -> None:
                 if spec.gated_tools
                 else ""
             )
-            typer.echo(f"    {spec.name:20} {spec.title}{gated}")
+            typer.echo(f"    {spec.person:10} {spec.name:20} {spec.title}{gated}")
         typer.echo("")
+
+
+@app.command("models")
+def list_models() -> None:
+    """List the models the configured key can actually see.
+
+    Model ids move — Gemini Flash went 3.0 to 3.7 inside a year — and the
+    `-latest` aliases are not safe to pin to. This is the answer to a 404.
+    """
+    from restaurant_ai.kernel import llm
+
+    try:
+        names = llm.available_models()
+    except Exception as exc:
+        typer.echo(f"  {type(exc).__name__}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    configured = {llm.model_name("reasoning"), llm.model_name("conversational")}
+    typer.echo(f"\n  {len(names)} model(s) available to this key\n")
+    for name in names:
+        typer.echo(f"    {'*' if name in configured else ' '} {name}")
+    missing = configured - set(names)
+    if missing:
+        typer.echo(f"\n  configured but NOT available: {', '.join(sorted(missing))}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo("\n  (* = configured for a tier)")
+
+
+@app.command("live-check")
+def live_check(
+    prompt: str = typer.Option(
+        "Reply with the single word: ready.", help="What to ask. Keep it small."
+    ),
+) -> None:
+    """Make one real call on each model tier and report what came back.
+
+    Worth spending a few cents on before a full pass: it settles whether the
+    credentials work and whether the request shape is one the configured models
+    actually accept, rather than discovering both thirteen agents into a run.
+    """
+    from langchain_core.messages import HumanMessage
+
+    from restaurant_ai.kernel import llm
+
+    described = llm.describe_provider()
+    typer.echo(f"\n  provider   {described['provider']}")
+    typer.echo(f"  key        {'set' if described['has_key'] else 'NOT SET'}")
+    typer.echo(f"  thinking   {described['thinking']}")
+    typer.echo(f"  max tokens {described['max_tokens']}\n")
+
+    if described["provider"] == "fake":
+        typer.echo(
+            "  LLM_PROVIDER=fake — nothing to check. Set it to 'anthropic' or 'google'.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    failures = 0
+    totals = {"input": 0, "output": 0}
+    for tier in ("reasoning", "conversational"):
+        typer.echo(f"  {tier} ({described[tier]})")
+        try:
+            response = llm.get_model(tier).invoke([HumanMessage(content=prompt)])
+        except Exception as exc:
+            failures += 1
+            typer.echo(f"    FAILED  {type(exc).__name__}: {exc}", err=True)
+            if "404" in str(exc) or "not found" in str(exc).lower():
+                # The likeliest first failure by a distance: model ids move, and
+                # a bare 404 says nothing about what you should have used.
+                typer.echo("    try:    restaurant-ai models", err=True)
+            typer.echo("", err=True)
+            continue
+
+        from restaurant_ai.kernel.graph import _message_text
+
+        usage = getattr(response, "usage_metadata", None) or {}
+        totals["input"] += usage.get("input_tokens", 0)
+        totals["output"] += usage.get("output_tokens", 0)
+        typer.echo(f"    said    {_message_text(response)!r}")
+        typer.echo(
+            f"    tokens  {usage.get('input_tokens', '?')} in, "
+            f"{usage.get('output_tokens', '?')} out\n"
+        )
+
+    typer.echo(f"  total     {totals['input']} in, {totals['output']} out")
+    if failures:
+        raise typer.Exit(code=1)
 
 
 @app.command("run-agent")
@@ -115,8 +203,18 @@ def run_one(
     name: str = typer.Argument(..., help="Agent name, e.g. stock_reorder."),
     business_date: str = typer.Option(None, help="ISO date; defaults to today."),
     approve: bool = typer.Option(False, help="Auto-approve anything the agent proposes."),
+    path: str = typer.Option(
+        "auto",
+        help="Which planner: auto (follow LLM_PROVIDER), model, or deterministic.",
+    ),
+    payload: str = typer.Option(
+        None,
+        help='What triggered the run, as JSON. e.g. \'{"guest_message": "any nut-free mains?"}\'',
+    ),
+    transcript: bool = typer.Option(False, help="Print the reasoning transcript."),
 ) -> None:
     """Run a single agent now."""
+    import json
     from datetime import date as _date
 
     from restaurant_ai.approvals.service import resolve
@@ -129,18 +227,31 @@ def run_one(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
+    if path not in {"auto", "model", "deterministic"}:
+        typer.echo("--path must be auto, model or deterministic.", err=True)
+        raise typer.Exit(code=1)
+
+    trigger_payload: dict = json.loads(payload) if payload else {}
+    if path != "auto":
+        trigger_payload["_force_path"] = path
+
     outcome = run_agent(
         spec,
         business_date=_date.fromisoformat(business_date) if business_date else None,
         trigger="cli",
+        trigger_payload=trigger_payload or None,
     )
 
-    typer.echo(f"\n{spec.title}")
+    typer.echo(f"\n{spec.person} — {spec.title}")
     typer.echo(f"  run    {outcome.run_id}")
-    typer.echo(f"  status {'awaiting approval' if outcome.interrupted else 'completed'}")
     if outcome.error:
+        # Say so on the status line too. Printing "completed" above an error is
+        # how a failed run gets skimmed past.
+        typer.echo("  status failed")
         typer.echo(f"  error  {outcome.error}", err=True)
         raise typer.Exit(code=1)
+    typer.echo(f"  status {'awaiting approval' if outcome.interrupted else 'completed'}")
+    _report_reasoning(outcome, transcript=transcript)
     typer.echo(f"  {outcome.summary}")
 
     if not outcome.interrupted:
@@ -187,10 +298,12 @@ def approvals(
         typer.echo("Nothing awaiting approval.")
         return
 
+    from restaurant_ai.kernel.registry import display_name
+
     typer.echo(f"{len(pending)} awaiting approval\n")
     for item in pending:
         typer.echo(f"  {item['approval_id']}")
-        typer.echo(f"    agent  {item['agent']}   value {item['value']}")
+        typer.echo(f"    from   {display_name(str(item['agent']))}   value {item['value']}")
         typer.echo(f"    {item['title']}")
         typer.echo(f"    requested {item['requested_at']}\n")
 
@@ -291,6 +404,51 @@ def simulate(
     if not balanced:
         typer.echo("\nJournals do not balance.", err=True)
         raise typer.Exit(code=1)
+
+
+def _report_reasoning(outcome, transcript: bool = False) -> None:
+    """Say which planner ran, what it cost, and optionally what it said.
+
+    The token counts are the point: an estimate of what thirteen agents cost to
+    run is guesswork, and this is the measurement.
+    """
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    from restaurant_ai.kernel.graph import _message_text
+
+    messages = (outcome.state or {}).get("messages") or []
+    turns = [m for m in messages if isinstance(m, AIMessage)]
+    if not turns:
+        typer.echo("  path   deterministic")
+        return
+
+    def _tokens(field: str) -> int:
+        # usage_metadata is a TypedDict and absent entirely on a stub or a
+        # cached reply, so both the message and the field have to be optional.
+        counts: list[int] = []
+        for message in turns:
+            usage: dict = dict(message.usage_metadata or {})
+            counts.append(int(usage.get(field) or 0))
+        return sum(counts)
+
+    tokens_in, tokens_out = _tokens("input_tokens"), _tokens("output_tokens")
+    typer.echo(f"  path   model, {len(turns)} turn(s), {tokens_in} tokens in / {tokens_out} out")
+
+    if not transcript:
+        return
+    typer.echo("")
+    for message in messages:
+        if isinstance(message, AIMessage):
+            said = _message_text(message)
+            if said:
+                for line in _wrap(said, 74):
+                    typer.echo(f"    | {line}")
+            for call in message.tool_calls or []:
+                typer.echo(f"    -> {call['name']}({json.dumps(call.get('args') or {})})")
+        elif isinstance(message, ToolMessage):
+            body = str(message.content)
+            typer.echo(f"    <- {message.name}: {body[:200]}{'…' if len(body) > 200 else ''}")
+    typer.echo("")
 
 
 def _wrap(text: str, width: int) -> list[str]:

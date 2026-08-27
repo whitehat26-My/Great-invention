@@ -289,6 +289,7 @@ def autonomous(context: ToolContext, perceived: dict[str, Any]) -> dict[str, Any
 PREP_FORECASTER_AGENT = register(
     AgentSpec(
         name="prep_forecaster",
+        person="Betrisha",
         department="kitchen",
         title="Dynamic Prep Forecaster",
         description=(

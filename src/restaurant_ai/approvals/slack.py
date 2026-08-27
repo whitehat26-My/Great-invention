@@ -23,6 +23,7 @@ from typing import Any
 import httpx
 
 from restaurant_ai.config import get_settings
+from restaurant_ai.kernel.registry import display_name
 from restaurant_ai.logging_setup import get_logger
 
 log = get_logger(__name__)
@@ -60,7 +61,10 @@ def build_blocks(request: dict[str, Any]) -> list[dict[str, Any]]:
         {
             "type": "section",
             "fields": [
-                {"type": "mrkdwn", "text": f"*Agent*\n{request.get('agent_name')}"},
+                {
+                    "type": "mrkdwn",
+                    "text": f"*Agent*\n{display_name(str(request.get('agent_name')))}",
+                },
                 {"type": "mrkdwn", "text": f"*Value*\n{value:,.2f}"},
             ],
         },

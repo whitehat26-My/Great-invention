@@ -28,49 +28,49 @@ from a model's impression of how much coconut milk feels right. The model's job
 is to read the situation, choose the action, and explain it to a human.
 
 The second decision, which follows from the first: **an agent proposes; a human
-disposes.** Four agents can spend money or publish something public, and all
-four stop.
+disposes.** Five agents can spend money or publish something public, and all
+five stop.
 
 ---
 
 ## The thirteen agents
 
 ### Front of House
-| Agent | What it does |
-|---|---|
-| **Reservation & Table Management** | Takes bookings from WhatsApp, web and phone; seats parties on the tightest-fitting table; flags tables running past their turn |
-| **Conversational Order** | Phone, drive-thru and kiosk orders; interprets dietary requests against the actual recipe; routes to the POS |
-| **Feedback & Reputation** | Sweeps Google/social hourly, classifies, drafts replies, escalates the serious ones |
+| Name | Agent | What it does |
+|---|---|---|
+| **Freddy** | Reservation & Table Management | Takes bookings from WhatsApp, web and phone; seats parties on the tightest-fitting table; flags tables running past their turn |
+| **Melissa** | Conversational Order | Phone, drive-thru and kiosk orders; interprets dietary requests against the actual recipe; routes to the POS |
+| **Aziera** | Feedback & Reputation | Sweeps Google/social hourly, classifies, drafts replies, escalates the serious ones — **approval-gated** |
 
 ### Kitchen & KDS
-| Agent | What it does |
-|---|---|
-| **Dynamic Prep Forecaster** | Forecasts per-item demand, explodes it to ingredient quantities, grosses up for yield loss, scores yesterday and corrects |
-| **Order Routing & Pacing** | Routes lines to stations and back-times each so a table's plates land together |
+| Name | Agent | What it does |
+|---|---|---|
+| **Betrisha** | Dynamic Prep Forecaster | Forecasts per-item demand, explodes it to ingredient quantities, grosses up for yield loss, scores yesterday and corrects |
+| **Ciknor** | Order Routing & Pacing | Routes lines to stations and back-times each so a table's plates land together |
 
 ### Supply Chain
-| Agent | What it does |
-|---|---|
-| **Stock Tracking & Auto-Reorder** | Recalculates reorder points from real usage and drafts POs when stock trips them — **approval-gated** |
-| **Supplier & Invoice** | Three-way match of PO, goods receipt and invoice; catches price creep — **approval-gated** |
+| Name | Agent | What it does |
+|---|---|---|
+| **Rain** | Stock Tracking & Auto-Reorder | Recalculates reorder points from real usage and drafts POs when stock trips them — **approval-gated** |
+| **Suri** | Supplier & Invoice | Three-way match of PO, goods receipt and invoice; catches price creep — **approval-gated** |
 
 ### Marketing & Revenue
-| Agent | What it does |
-|---|---|
-| **Social Media & Content** | Writes and schedules posts; builds win-back offers for dormant diners |
-| **Dynamic Pricing & Menu Engineering** | Star/Plowhorse/Puzzle/Dog classification and guardrailed price proposals — **approval-gated** |
+| Name | Agent | What it does |
+|---|---|---|
+| **Franky** | Social Media & Content | Drafts posts and win-back offers for dormant diners — **approval-gated** |
+| **Irma** | Dynamic Pricing & Menu Engineering | Star/Plowhorse/Puzzle/Dog classification and guardrailed price proposals — **approval-gated** |
 
 ### Workforce
-| Agent | What it does |
-|---|---|
-| **Shift Scheduling** | Shapes shifts against the hourly demand curve and fits a roster inside availability, hours caps and rest rules |
-| **Staff Assistant & Onboarding** | Answers SOP and recipe questions; validates and routes shift swaps |
+| Name | Agent | What it does |
+|---|---|---|
+| **Henry** | Shift Scheduling | Shapes shifts against the hourly demand curve and fits a roster inside availability, hours caps and rest rules |
+| **Kaksu** | Staff Assistant & Onboarding | Answers SOP and recipe questions; validates and routes shift swaps |
 
 ### Finance
-| Agent | What it does |
-|---|---|
-| **Bookkeeping & Reconciliation** | Squares POS takings against card settlements, platform payouts and the bank; posts double-entry journals |
-| **Daily Performance** | Prime cost, labour ratio, food cost, operating margin, and what moved them |
+| Name | Agent | What it does |
+|---|---|---|
+| **Emil** | Bookkeeping & Reconciliation | Squares POS takings against card settlements, platform payouts and the bank; posts double-entry journals |
+| **Camelia** | Daily Performance | Prime cost, labour ratio, food cost, operating margin, and what moved them |
 
 ---
 
@@ -80,13 +80,15 @@ All thirteen are the same compiled LangGraph graph. Only the `AgentSpec` differs
 — prompt, tools, model tier, approval policy.
 
 ```
-perceive ─→ reason ─→ act ─┬─ nothing gated ─────────────→ record
+              ┌────────── more to do ──────────┐
+              ↓                                │
+perceive ─→ reason ─→ act ─┬─ nothing gated ───┴────────→ record
                            └─ await_approval ─→ commit ──→ record
 ```
 
 - **perceive** — loads this agent's read-only view of the world. No LLM, no writes.
 - **reason** — the LLM bound to this agent's tools, or its deterministic path when `LLM_PROVIDER=fake`.
-- **act** — runs the tools. A gated tool returns a *proposal* instead of acting.
+- **act** — runs the tools, and answers each one. A gated tool returns a *proposal* instead of acting.
 - **await_approval** — calls `interrupt()`. The graph checkpoints to Postgres and the process **unwinds**.
 - **commit** — performs the approved proposals in one transaction.
 - **record** — writes the audit trail and publishes domain events.
@@ -94,6 +96,25 @@ perceive ─→ reason ─→ act ─┬─ nothing gated ───────�
 Splitting `act` from `commit` is the point. Preparing an action and performing
 it are separate steps with a human in between, and the agent has no path from
 one to the other.
+
+The split has to be real, though, and twice it was not. A gated tool that does
+its own publishing inside `act` has already acted by the time anyone sees the
+proposal — Franky scheduled posts straight to the platforms, harmless only
+because `SOCIAL_PROVIDER` defaults to `fake`. And a `gate_when` narrower than
+what its tool can change lets the rest through: Irma gated on price changes,
+so three bundles went out unapproved. A drafted post now carries no
+`external_ref` and a drafted offer no `issued_count`, which is what makes
+prepared distinguishable from done without a status column to forget to set.
+
+The loop back from `act` to `reason` exists only on the live-model path, and it
+is the difference between an agent and a one-shot planner. A model that never
+sees its tool results cannot look up a table and then book it — the id it needs
+is in a result it was never shown — and its closing summary describes what it
+*meant* to do rather than what happened. The deterministic path does not loop:
+it decides its whole plan up front and already knows the outcome.
+
+The loop stops at the gate. When a tool proposes something gated the run parks,
+and no number of remaining iterations lets the model carry on past a human.
 
 Because the checkpointer is Postgres-backed, an approval **survives a deploy**.
 Verified by running an agent in one interpreter and approving from a second that
@@ -124,8 +145,9 @@ Hock Seng Dry Goods (PO-260827-001) — 4093.80, deliver 2026-09-01
 Every line says what is on hand, how many days that covers, and what it is
 ordering to reach. The human can judge it without opening a database.
 
-Gated by default: purchase orders, supplier payments, menu price changes,
-replies to poor reviews, and anything over `APPROVAL_VALUE_THRESHOLD`. Policy
+Gated by default: purchase orders, supplier payments, menu price changes and
+bundles, replies to poor reviews, social posts, win-back offers, and anything
+over `APPROVAL_VALUE_THRESHOLD`. Policy
 lives on the tool, not in agent code, so "this needs a human" is a property of
 the action and cannot be forgotten by the next agent that performs it.
 
@@ -193,7 +215,7 @@ Docker daemon.
 make api         # FastAPI webhook receiver on :8000
 make worker      # Celery worker
 make beat        # Celery beat — the operating rhythm below
-make test        # 493 tests
+make test        # 558 tests
 make check       # everything CI runs: lint, format, typecheck, tests
 ```
 
@@ -207,6 +229,102 @@ restaurant-ai approvals --resolve <id>   # approve it
 restaurant-ai menu-cost MNU-NASILEMK     # plate cost, exploded
 restaurant-ai simulate-day --auto-approve
 ```
+
+---
+
+## Running it on real models
+
+Everything above runs with no key. Two live providers are supported.
+
+**Gemini — free, no card.** Get a key at [aistudio.google.com](https://aistudio.google.com):
+
+```bash
+LLM_PROVIDER=google
+GOOGLE_API_KEY=...
+```
+
+The free tier covers **Flash and Flash-Lite only**, which is why both tiers
+default to Flash; a Pro model needs billing attached.
+
+Budget for the rate limit rather than the token cost. The quota that bites is
+`GenerateRequestsPerMinutePerProjectPerModel`, and measured against a real key
+it is **5 requests a minute**, not the 15 the docs suggest. A 13-agent pass is
+40–50 requests, so it takes about twenty minutes of mostly waiting. Two things
+make that bearable, and both are defaults:
+
+- The two tiers use **different Flash ids**. The quota is counted per model, so
+  sharing one makes the thirteen agents queue behind each other for nothing.
+- `LLM_MAX_RETRIES=10`. A rate-limited provider is a queue, not an error — but
+  the client defaults (6 for Gemini, 2 for Claude) back off for about half the
+  wait a free tier asks for and then give up, which fails the run and loses the
+  work. Three agents died that way on the first pass.
+
+**Claude.** From [console.anthropic.com](https://console.anthropic.com/settings/keys):
+
+```bash
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+`MODEL_REASONING` (`claude-opus-5`) takes the analytical agents — forecasting,
+pricing, reconciliation, scheduling, reorder. `MODEL_CONVERSATIONAL`
+(`claude-sonnet-5`) takes the guest-facing, high-volume ones.
+
+Either way, check the key and the request shape before setting thirteen agents
+going:
+
+```bash
+restaurant-ai live-check     # one small call per tier, with token counts
+restaurant-ai models         # what this key can actually see
+```
+
+`models` exists because model ids move — Gemini Flash went 3.0 to 3.7 inside a
+year — and the `-latest` aliases are not safe to pin to; one of them resolved to
+a deprecated model and returned a bare 404. It is the answer to "that id is
+wrong", which is otherwise a mystery.
+
+### What differs between the two
+
+Everything above `kernel/llm.py` is provider-agnostic: the graph, the loop, the
+tool dispatch and the approval gate all sit on LangChain's `BaseChatModel`. What
+differs is confined to that one module, and both differences are 400s or
+warnings rather than anything subtle:
+
+- **Neither takes a `temperature`.** Claude Opus 5 and Sonnet 5 reject a request
+  carrying one outright; Gemini 3 Flash uses fixed sampling and discards it,
+  warning once per call. `LLM_TEMPERATURE` is unset by default for both, and is
+  only correct against a model old enough to accept it.
+- **Thinking is spelled differently.** Claude takes
+  `LLM_THINKING=adaptive`. Gemini 3 dropped `budget_tokens` for a thinking
+  *level*, so it takes `GOOGLE_REASONING_EFFORT=minimal|low|medium|high` and
+  uses the model's own default when unset.
+
+One thing that is *not* a difference, having been checked rather than assumed:
+the google-genai SDK announces "AFC is enabled with max remote calls: 10" on
+every call. Automatic function calling is absent from the actual request —
+tools go as declarations, not callables — so the SDK does not execute the stub
+functions the graph binds. Had it done so, every agent would have received
+`"Tool execution is handled by the agent runtime."` as its tool result, and it
+would have looked like a model problem rather than a wiring one.
+
+Gemini's function declarations are an OpenAPI 3.0 subset, which is the usual
+rough edge — nine tool arguments here are `str | None` and serialise as
+`anyOf: [string, null]`. They convert to `nullable=True` correctly, and
+`test_llm_wiring.py` asserts it for all thirty tools so a converter change
+cannot break it quietly.
+
+### Watching one agent think
+
+```bash
+restaurant-ai run-agent ordering --path model --transcript \
+  --payload '{"guest_message": "any nut-free mains?"}'
+restaurant-ai run-agent ordering --path deterministic
+```
+
+`--path` pins one run to one planner, so the model's choice can be held against
+what the deterministic path would have done for the same restaurant on the same
+day. Each run reports its turns and token counts, and `agent_run.model` records
+which model answered — so what a day actually cost is a query, not an estimate.
 
 ---
 
@@ -299,10 +417,18 @@ src/restaurant_ai/
 
 ## Testing
 
-493 tests, run on every push and pull request by
+558 tests, run on every push and pull request by
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml). `pytest` runs them all
 against a real PostgreSQL with no API key and no network — if CI ever needs a
 secret to pass, the deterministic path has regressed.
+
+That includes the live-model path. `tests/test_live_reasoning.py` drives it
+through a stub model that returns what the test tells it to and records what it
+was shown, so a tool the model chose, the result it gets back, a two-step plan,
+the iteration cap and the approval gate are all covered without a key. It cannot
+check whether Claude chooses *well* — only that what it chooses is carried out
+and that what comes back is true. The path had rotted to the point of being
+unreachable precisely because nothing exercised it.
 
 CI does four things beyond the suite: checks formatting (so `make fmt` and CI
 cannot disagree), typechecks, replays a full simulated service day through the
@@ -355,7 +481,9 @@ Everything is in `.env.example` and read in exactly one place (`config.py`).
 The defaults run the whole platform simulated, so an empty `.env` works.
 
 ```bash
-LLM_PROVIDER=fake            # fake | anthropic
+LLM_PROVIDER=fake            # fake | anthropic | google
+LLM_THINKING=adaptive        # adaptive | disabled | off  (Anthropic only)
+GOOGLE_REASONING_EFFORT=     # minimal | low | medium | high  (Gemini only)
 APPROVAL_CHANNEL=none        # slack | telegram | none
 SERVICE_LEVEL_Z=1.65         # 95% chance of not stocking out in a lead time
 PRICE_CHANGE_MAX_PCT=0.10    # no single price move exceeds this

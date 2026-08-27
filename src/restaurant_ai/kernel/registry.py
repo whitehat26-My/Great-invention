@@ -68,3 +68,17 @@ def reset_registry() -> None:
     global _loaded
     _registry.clear()
     _loaded = False
+
+
+def display_name(agent_name: str) -> str:
+    """How an agent is introduced to a human.
+
+    Falls back to the slug for anything not in the registry, because an
+    approval card is the wrong place to raise a KeyError — a stale row from a
+    renamed agent should still render.
+    """
+    try:
+        spec = get_agent(agent_name)
+    except KeyError:
+        return agent_name
+    return f"{spec.person} ({spec.title})" if spec.person else spec.title

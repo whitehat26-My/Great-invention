@@ -10,6 +10,19 @@ The fake does not pretend to reason. Agents that need real judgement declare an
 ``autonomous`` path in their spec, which the graph prefers whenever the fake is
 active, so what runs offline is the deterministic logic rather than a
 hallucinated imitation of it.
+
+Two live providers are supported, ``anthropic`` and ``google``. Everything above
+this module is provider-agnostic — the graph, the loop, the tool dispatch and
+the approval gate all sit on LangChain's ``BaseChatModel`` — so the differences
+are confined here, and they are real ones:
+
+- Claude Opus 5 and Sonnet 5 **reject** a request carrying ``temperature``.
+  Gemini requires one or defaults to 0.7.
+- Claude takes ``thinking={"type": "adaptive"}``. Gemini 3 dropped
+  ``thinking_budget`` in favour of a thinking *level*.
+
+Neither of those is something a shared setting can paper over, so each provider
+reads the settings that apply to it and ignores the ones that do not.
 """
 
 from __future__ import annotations
@@ -34,6 +47,17 @@ def is_fake() -> bool:
     return get_settings().llm_provider == "fake"
 
 
+def model_name(tier: str = "conversational") -> str:
+    """The model id for a tier under the configured provider."""
+    settings = get_settings()
+    reasoning = tier == "reasoning"
+    if settings.llm_provider == "google":
+        return (
+            settings.google_model_reasoning if reasoning else settings.google_model_conversational
+        )
+    return settings.model_reasoning if reasoning else settings.model_conversational
+
+
 def get_model(tier: str = "conversational") -> BaseChatModel:
     """Return the chat model for a tier.
 
@@ -42,16 +66,29 @@ def get_model(tier: str = "conversational") -> BaseChatModel:
     one for high-volume guest-facing work.
     """
     settings = get_settings()
-    if settings.llm_provider == "fake":
+    provider = settings.llm_provider
+    if provider == "fake":
         raise FakeModelInUse(
-            "LLM_PROVIDER=fake: no chat model is available. Agents should use their "
-            "autonomous path, which the kernel selects automatically."
+            "LLM_PROVIDER=fake: no chat model is available. Agents fall back to "
+            "their deterministic path; set LLM_PROVIDER=anthropic to use a model."
         )
 
-    model_name = settings.model_reasoning if tier == "reasoning" else settings.model_conversational
-    if model_name in _cache:
-        return _cache[model_name]
+    name = model_name(tier)
+    # Keyed by provider too. Model ids are not unique across providers in
+    # principle, and a cache that assumes they are hands back the wrong client
+    # the first time they collide.
+    key = f"{provider}:{name}"
+    if key in _cache:
+        return _cache[key]
 
+    builder = {"anthropic": _build_anthropic, "google": _build_google}[provider]
+    model = builder(settings, name)
+    log.info("model initialised", tier=tier, provider=provider, model=name)
+    _cache[key] = model
+    return model
+
+
+def _build_anthropic(settings: Any, name: str) -> BaseChatModel:
     if not settings.anthropic_api_key:
         raise RuntimeError(
             "LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set. "
@@ -61,18 +98,97 @@ def get_model(tier: str = "conversational") -> BaseChatModel:
     from langchain_anthropic import ChatAnthropic
     from pydantic import SecretStr
 
+    kwargs: dict[str, Any] = {
+        "model": name,
+        "api_key": SecretStr(settings.anthropic_api_key),
+        "max_tokens": settings.llm_max_tokens,
+        "max_retries": settings.llm_max_retries,
+    }
+    # Only send a sampling parameter if one was actually asked for. Claude
+    # Opus 5 and Sonnet 5 reject the request outright if `temperature` is
+    # present at all, so a defaulted 0.0 is not a harmless no-op — it is a 400
+    # on every single call the platform would ever make.
+    if settings.llm_temperature is not None:
+        kwargs["temperature"] = settings.llm_temperature
+    if settings.llm_thinking != "off":
+        # Adaptive: the model decides how hard to think per request. That suits
+        # both tiers — "what is on the menu" costs nothing extra, while "does
+        # this dish contain peanuts" gets the thought it deserves.
+        kwargs["thinking"] = {"type": settings.llm_thinking}
+
     # langchain-anthropic's stubs disagree with its runtime signature here
     # (model / max_tokens are accepted; api_key coerces a str). Verified working
     # against the installed version.
-    model = ChatAnthropic(  # type: ignore[call-arg]
-        model=model_name,
-        api_key=SecretStr(settings.anthropic_api_key),
-        max_tokens=settings.llm_max_tokens,
-        temperature=settings.llm_temperature,
-    )
-    log.info("model initialised", tier=tier, model=model_name)
-    _cache[model_name] = model
-    return model
+    return ChatAnthropic(**kwargs)  # type: ignore[arg-type]
+
+
+def _build_google(settings: Any, name: str) -> BaseChatModel:
+    if not settings.google_api_key:
+        raise RuntimeError(
+            "LLM_PROVIDER=google but GOOGLE_API_KEY is not set. Get a free key at "
+            "https://aistudio.google.com, or use LLM_PROVIDER=fake to run "
+            "deterministically."
+        )
+
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from pydantic import SecretStr
+
+    kwargs: dict[str, Any] = {
+        "model": name,
+        "google_api_key": SecretStr(settings.google_api_key),
+        "max_output_tokens": settings.llm_max_tokens,
+        "max_retries": settings.llm_max_retries,
+    }
+    # Same rule as Anthropic, for the same reason: Gemini 3 Flash uses fixed
+    # sampling and discards a temperature it is sent, warning once per call
+    # while it does so. Both frontier providers have landed in the same place.
+    if settings.llm_temperature is not None:
+        kwargs["temperature"] = settings.llm_temperature
+    # Gemini 3 replaced `thinking_budget` with a thinking level, which
+    # langchain exposes as `reasoning_effort`. Left unset the model uses its own
+    # default, which is the right starting point — LLM_THINKING is Anthropic's
+    # spelling and does not carry over.
+    if settings.google_reasoning_effort is not None:
+        kwargs["reasoning_effort"] = settings.google_reasoning_effort
+
+    return ChatGoogleGenerativeAI(**kwargs)
+
+
+def available_models() -> list[str]:
+    """What the configured key can actually see.
+
+    Model ids move — Flash went 3.0 to 3.7 inside a year — and the ``-latest``
+    aliases are not safe to pin to; one of them resolved to a deprecated model
+    and returned a bare 404. This turns "that id is wrong" from a mystery into
+    a list.
+    """
+    provider = get_settings().llm_provider
+    if provider == "google":
+        return _google_models()
+    if provider == "anthropic":
+        return _anthropic_models()
+    raise FakeModelInUse("LLM_PROVIDER=fake: there are no models to list.")
+
+
+def _google_models() -> list[str]:
+    from google import genai
+
+    client = genai.Client(api_key=get_settings().google_api_key)
+    names = []
+    for model in client.models.list():
+        actions = getattr(model, "supported_actions", None)
+        if actions and "generateContent" not in actions:
+            continue
+        if model.name:
+            names.append(model.name.removeprefix("models/"))
+    return sorted(names)
+
+
+def _anthropic_models() -> list[str]:
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=get_settings().anthropic_api_key)
+    return sorted(model.id for model in client.models.list())
 
 
 def reset_model_cache() -> None:
@@ -81,9 +197,18 @@ def reset_model_cache() -> None:
 
 def describe_provider() -> dict[str, Any]:
     settings = get_settings()
-    return {
+    described = {
         "provider": settings.llm_provider,
-        "reasoning": settings.model_reasoning,
-        "conversational": settings.model_conversational,
-        "has_key": bool(settings.anthropic_api_key),
+        "reasoning": model_name("reasoning"),
+        "conversational": model_name("conversational"),
+        "max_tokens": settings.llm_max_tokens,
     }
+    # Report the knob that actually applies, rather than the one this provider
+    # ignores.
+    if settings.llm_provider == "google":
+        described["thinking"] = settings.google_reasoning_effort or "model default"
+        described["has_key"] = bool(settings.google_api_key)
+    else:
+        described["thinking"] = settings.llm_thinking
+        described["has_key"] = bool(settings.anthropic_api_key)
+    return described

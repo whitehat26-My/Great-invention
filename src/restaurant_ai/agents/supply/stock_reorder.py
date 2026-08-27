@@ -419,6 +419,7 @@ _draft_tool.commit_fn = commit_purchase_orders  # type: ignore[attr-defined]
 STOCK_REORDER_AGENT = register(
     AgentSpec(
         name="stock_reorder",
+        person="Rain",
         department="supply",
         title="Stock Tracking & Auto-Reorder Agent",
         description=(
