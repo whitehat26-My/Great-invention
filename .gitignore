@@ -11,3 +11,11 @@ dist/
 .env
 .coverage
 htmlcov/
+
+# Runtime state, not source. Celery beat writes its "last fired" database on
+# every start, so a committed copy hands everyone else this machine's schedule
+# history — and beat may then skip a run it believes already happened. The
+# suffix varies by platform because it is a shelve/dbm file.
+celerybeat-schedule*
+celerybeat.pid
+dump.rdb
