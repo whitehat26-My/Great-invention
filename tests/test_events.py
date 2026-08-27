@@ -26,24 +26,21 @@ def _clean_subscribers():
 
 class TestPublish:
     def test_writes_to_the_outbox(self, db):
-        publish(Event(Topic.STOCK_LOW, {"ingredient": "chicken"}), session=db)
-        row = (
-            db.execute(select(OutboxEvent).where(OutboxEvent.topic == str(Topic.STOCK_LOW)))
-            .scalars()
-            .first()
-        )
+        # Returned directly rather than re-queried: the database holds events
+        # from other activity on the same topic, and this asserts on the one
+        # this test published.
+        row = publish(Event(Topic.STOCK_LOW, {"ingredient": "chicken"}), session=db)
         assert row is not None
         assert row.payload["ingredient"] == "chicken"
+        assert row.topic == str(Topic.STOCK_LOW)
 
     def test_joins_the_callers_transaction(self, db):
         # Written through the caller's session, so it lives or dies with the
         # state change beside it.
-        publish(Event(Topic.ORDER_PLACED, {"order": "A-1"}), session=db)
-        assert (
-            db.execute(select(OutboxEvent).where(OutboxEvent.topic == str(Topic.ORDER_PLACED)))
-            .scalars()
-            .first()
-        )
+        row = publish(Event(Topic.ORDER_PLACED, {"order": "A-1"}), session=db)
+        assert db.execute(
+            select(OutboxEvent).where(OutboxEvent.id == row.id)
+        ).scalar_one_or_none()
 
     def test_undispatched_by_default(self, db):
         row = publish(Event(Topic.ORDER_PLACED, {}), session=db)

@@ -170,8 +170,25 @@ def build_graph(spec: AgentSpec):
         if not pending:
             return {}
 
+        # Persist each proposal as a resolvable request BEFORE interrupting.
+        # Once interrupt() unwinds the graph, this node's remaining code does
+        # not run until someone resumes it — so a request written afterwards
+        # would never exist, and there would be nothing for Slack to resolve.
+        from restaurant_ai.approvals.service import record_request
+
         with session_scope() as session:
             audit.mark_awaiting_approval(session, state["run_id"])
+            for proposal in pending:
+                record_request(
+                    run_id=state["run_id"],
+                    thread_id=state["thread_id"],
+                    agent_name=spec.name,
+                    title=proposal.summary,
+                    detail=proposal.detail,
+                    payload=audit._jsonable(proposal.payload),
+                    value=proposal.value,
+                    session=session,
+                )
 
         decision = request_approval(pending, spec.name, state["run_id"])
         return {"proposals": apply_decision(pending, decision)}
