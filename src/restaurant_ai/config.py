@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     restaurant_name: str = "The Great Invention"
     timezone: str = "Asia/Kuala_Lumpur"
     currency: str = "MYR"
+    # What a guest sees, as against what the ledger records. "MYR 24.90" is
+    # right in a journal and wrong on a social post; nobody writes the ISO code
+    # on a menu. Kept beside the code so the two move together.
+    currency_symbol: str = "RM"
 
     # --- Postgres -----------------------------------------------------------
     postgres_host: str = "localhost"

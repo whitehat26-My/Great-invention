@@ -126,7 +126,7 @@ def schedule_content(context: ToolContext, posts: int = 3, days_ahead: int = 3) 
         body = templates[index % len(templates)].format(
             name=item.name,
             description=(item.description or "").rstrip("."),
-            price=f"RM{item.price}",
+            price=f"{get_settings().currency_symbol}{item.price}",
         )
         platform = PLATFORMS[index % len(PLATFORMS)]
         when = clock.now() + timedelta(days=(index % max(days_ahead, 1)), hours=11)

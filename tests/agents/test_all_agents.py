@@ -354,3 +354,33 @@ class TestFrankyPublishesOnlyWhenTold:
         for tool_name in ("schedule_content", "build_reengagement"):
             tool = get_agent("social_content").tool(tool_name)
             assert tool.should_gate({}) is False
+
+
+class TestCurrencyReadsRight:
+    def test_a_post_uses_the_symbol_not_the_iso_code(self, db):
+        """MYR belongs in a journal; RM belongs on a menu.
+
+        The symbol was hardcoded, so changing CURRENCY would have left posts
+        quoting ringgit in whatever the restaurant had moved to.
+        """
+        from restaurant_ai.config import get_settings
+        from restaurant_ai.db.models import SocialPost
+
+        spec = get_agent("social_content")
+        with ephemeral_checkpointer() as cp:
+            outcome = run_agent(spec, trigger="test", checkpointer=cp)
+        posts = (
+            db.execute(select(SocialPost).where(SocialPost.run_id == outcome.run_id))
+            .scalars()
+            .all()
+        )
+        assert posts
+        symbol = get_settings().currency_symbol
+        assert any(symbol in p.body for p in posts)
+
+    def test_the_symbol_and_the_code_are_both_configured(self):
+        from restaurant_ai.config import get_settings
+
+        settings = get_settings()
+        assert settings.currency and settings.currency_symbol
+        assert settings.currency != settings.currency_symbol
