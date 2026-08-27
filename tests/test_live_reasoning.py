@@ -458,6 +458,43 @@ class TestSummaries:
         assert outcome.summary == "Fryer is fine."
 
 
+class TestThinkingSurvivesTheLoop:
+    def test_a_thinking_block_is_still_there_on_the_next_turn(self, db, model):
+        """Otherwise the second request is a 400.
+
+        With thinking on, Anthropic requires the thinking block — signature and
+        all — to come back with the assistant turn that made the tool call. If
+        anything between here and the next request drops it, every multi-turn
+        live run fails on turn two, and finding that out costs money.
+        """
+
+        def reply(messages: list[BaseMessage], turn: int) -> AIMessage:
+            if turn == 1:
+                return AIMessage(
+                    content=[
+                        {
+                            "type": "thinking",
+                            "thinking": "Four covers, so the smallest table that fits.",
+                            "signature": "sig-abc",
+                        },
+                        {"type": "text", "text": "Finding a table."},
+                    ],
+                    tool_calls=[{"name": "find_table", "args": {"party_size": 4}, "id": "tu_1"}],
+                )
+            return says("Found one.")
+
+        stub = model(reply)
+        outcome = run(spec("live_thinking_roundtrip"))
+
+        assert stub.turns == 2
+        replayed = next(m for m in stub.seen[1] if isinstance(m, AIMessage))
+        blocks = [b for b in replayed.content if isinstance(b, dict)]
+        thinking = next(b for b in blocks if b.get("type") == "thinking")
+        assert thinking["signature"] == "sig-abc"
+        # Kept for the model, kept out of what a human reads.
+        assert "smallest table" not in outcome.summary
+
+
 class TestFailures:
     def test_a_failing_tool_is_reported_back_to_the_model(self, db, model):
         stub = model(lambda messages, turn: call("explode") if turn == 1 else says("Noted."))
