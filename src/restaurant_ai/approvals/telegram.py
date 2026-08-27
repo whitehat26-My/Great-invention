@@ -132,19 +132,50 @@ def parse_callback(body: dict[str, Any]) -> Interaction | None:
     )
 
 
+class TelegramUnreachable(RuntimeError):
+    """The request never got to Telegram — proxy, firewall, DNS or TLS."""
+
+
+class TelegramRejected(RuntimeError):
+    """Telegram answered, and said no."""
+
+
 def api(method: str, **payload: Any) -> dict[str, Any]:
-    """Call one Telegram Bot API method. Raises on a transport failure."""
+    """Call one Telegram Bot API method.
+
+    The two failure modes are worth telling apart. "403 Forbidden" from an
+    egress proxy that never let the connection out looks identical to a bad
+    token unless something says otherwise, and the fixes are nothing alike:
+    one is a network policy, the other is a new token from BotFather.
+    """
     settings = get_settings()
     if not settings.telegram_bot_token:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN is not set.")
-    response = httpx.post(
-        f"https://api.telegram.org/bot{settings.telegram_bot_token}/{method}",
-        json=payload,
-        timeout=payload.get("timeout", 10) + 10,
-    )
-    body: dict[str, Any] = response.json()
+        raise TelegramUnreachable("TELEGRAM_BOT_TOKEN is not set.")
+
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/{method}"
+    try:
+        response = httpx.post(url, json=payload, timeout=payload.get("timeout", 10) + 10)
+    except httpx.ProxyError as exc:
+        raise TelegramUnreachable(
+            f"Could not reach api.telegram.org — the proxy refused the connection ({exc}). "
+            "This is a network policy, not a bad token."
+        ) from exc
+    except httpx.TransportError as exc:
+        raise TelegramUnreachable(
+            f"Could not reach api.telegram.org ({type(exc).__name__}: {exc})."
+        ) from exc
+
+    try:
+        body: dict[str, Any] = response.json()
+    except ValueError as exc:
+        # An HTML error page means something in the middle answered, not Telegram.
+        raise TelegramUnreachable(
+            f"api.telegram.org returned HTTP {response.status_code} and not JSON — "
+            "something between here and Telegram answered instead of Telegram."
+        ) from exc
+
     if not body.get("ok"):
-        raise RuntimeError(f"Telegram {method} failed: {body.get('description')}")
+        raise TelegramRejected(f"Telegram refused {method}: {body.get('description')}")
     return body
 
 

@@ -183,3 +183,50 @@ class TestPolling:
         )
         with pytest.raises(RuntimeError, match="webhook is registered"):
             listener.listen(max_rounds=1)
+
+
+class TestFailuresAreDistinguishable:
+    """A blocked connection and a bad token need opposite fixes.
+
+    An egress proxy refusing CONNECT answers "403 Forbidden", which reads
+    exactly like Telegram rejecting a token unless something says otherwise.
+    One is a network policy; the other is a new token from BotFather.
+    """
+
+    def test_a_blocked_connection_says_so(self, telegram, monkeypatch):
+        import httpx
+
+        from restaurant_ai.approvals import telegram as tg
+
+        def blocked(*a, **kw):
+            raise httpx.ProxyError("403 Forbidden")
+
+        monkeypatch.setattr(tg.httpx, "post", blocked)
+        with pytest.raises(tg.TelegramUnreachable, match="not a bad token"):
+            tg.api("getMe")
+
+    def test_a_refused_token_says_so(self, telegram, monkeypatch):
+        from restaurant_ai.approvals import telegram as tg
+
+        class Response:
+            status_code = 401
+
+            def json(self):
+                return {"ok": False, "description": "Unauthorized"}
+
+        monkeypatch.setattr(tg.httpx, "post", lambda *a, **kw: Response())
+        with pytest.raises(tg.TelegramRejected, match="Unauthorized"):
+            tg.api("getMe")
+
+    def test_something_answering_that_is_not_telegram_says_so(self, telegram, monkeypatch):
+        from restaurant_ai.approvals import telegram as tg
+
+        class HtmlPage:
+            status_code = 502
+
+            def json(self):
+                raise ValueError("not json")
+
+        monkeypatch.setattr(tg.httpx, "post", lambda *a, **kw: HtmlPage())
+        with pytest.raises(tg.TelegramUnreachable, match="instead of Telegram"):
+            tg.api("getMe")
