@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from restaurant_ai.config import get_settings
@@ -30,7 +30,7 @@ def now() -> datetime:
 
 
 def utcnow() -> datetime:
-    return now().astimezone(timezone.utc)
+    return now().astimezone(UTC)
 
 
 def today() -> date:
