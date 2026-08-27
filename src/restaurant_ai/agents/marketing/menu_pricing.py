@@ -136,7 +136,7 @@ def propose_changes(
         min_margin_pct=settings.min_gross_margin_pct,
         max_proposals=max_proposals,
     )
-    bundles = propose_bundles(analysis)
+    bundles = propose_bundles(analysis, min_margin_pct=settings.min_gross_margin_pct)
 
     for proposal in proposals:
         publish(
@@ -250,7 +250,11 @@ _price_tool = ToolSpec(
     fn=propose_changes,
     args_schema=ProposeArgs,
     requires_approval=True,
-    gate_when=lambda r: r.get("price_changes", 0) > 0,
+    # Bundles are changes to what the restaurant charges, and gating only on
+    # price_changes let three of them through unapproved on the first live run:
+    # the model proposed no price moves and three bundles, and the run reported
+    # "completed" without ever asking anyone.
+    gate_when=lambda r: r.get("price_changes", 0) > 0 or r.get("bundles", 0) > 0,
     approval_value=lambda r: Decimal(str(r.get("expected_gain", "0"))),
     approval_summary=lambda r: (
         f"{r['price_changes']} price change(s) proposed, expected contribution gain "

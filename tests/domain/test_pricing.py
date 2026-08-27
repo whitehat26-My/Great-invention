@@ -154,12 +154,37 @@ class TestBundles:
     def test_bundle_stays_profitable(self):
         items = [_perf("STAR", "30.00", "8.00", "500"), _perf("DOG", "14.00", "5.00", "5")]
         for bundle in propose_bundles(classify_menu(items)):
-            assert bundle.bundle_margin_pct > D("0.40")
+            assert bundle.bundle_margin_pct >= D("0.55")
 
     def test_thin_margin_bundles_are_rejected(self):
-        # If discounting would push the pair under 40% margin, do not propose it.
         items = [_perf("STAR", "20.00", "13.00", "500"), _perf("DOG", "14.00", "11.00", "5")]
         assert propose_bundles(classify_menu(items), discount_pct=D("0.30")) == []
+
+    def test_the_floor_is_the_one_it_was_given(self):
+        """It was hardcoded at 40% while the agent reported the configured 55%.
+
+        So a bundle at 54.6% went out under a guardrail that had never been
+        applied to it — and the run said "completed". A report claiming a
+        constraint was enforced when it was not is worse than no report.
+        """
+        items = [_perf("STAR", "30.00", "11.00", "500"), _perf("DOG", "14.00", "6.00", "5")]
+
+        lenient = propose_bundles(classify_menu(items), min_margin_pct=D("0.40"))
+        strict = propose_bundles(classify_menu(items), min_margin_pct=D("0.99"))
+
+        assert lenient, "a 40% floor should admit this pair"
+        assert strict == [], "a 99% floor must admit nothing"
+        for bundle in lenient:
+            assert bundle.bundle_margin_pct >= D("0.40")
+
+    def test_the_default_floor_matches_the_configured_one(self):
+        # The agent reports `min_gross_margin_pct` as the guardrail it applied.
+        import inspect
+
+        from restaurant_ai.config import get_settings
+
+        default = inspect.signature(propose_bundles).parameters["min_margin_pct"].default
+        assert default == get_settings().min_gross_margin_pct
 
     def test_needs_both_a_star_and_a_laggard(self):
         assert propose_bundles(classify_menu([_perf("ONLY", "30.00", "8.00", "500")])) == []

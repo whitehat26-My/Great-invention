@@ -123,6 +123,22 @@ class TestApprovalGates:
         assert tool.gate_when is not None, f"{agent_name}.{tool_name} would gate on empty results"
         assert tool.should_gate({}) is False
 
+    def test_a_gate_covers_everything_its_tool_can_change(self):
+        """`gate_when` decides what escapes review, so it has to be exhaustive.
+
+        menu_pricing gated on `price_changes` alone. On the first live run the
+        model proposed no price moves and three bundles — each a change to what
+        the restaurant charges — and every one of them went through unapproved
+        while the run reported "completed".
+        """
+        gate = get_agent("menu_pricing").tool("propose_changes").gate_when
+        assert gate is not None
+        assert gate({"price_changes": 0, "bundles": 0}) is False
+        assert gate({"price_changes": 2, "bundles": 0}) is True
+        assert gate({"price_changes": 0, "bundles": 3}) is True, (
+            "bundles change what the restaurant charges and must face a human"
+        )
+
     def test_stock_reorder_parks_with_an_actionable_request(self, db, stock_is_low):
         spec = get_agent("stock_reorder")
         with ephemeral_checkpointer() as cp:

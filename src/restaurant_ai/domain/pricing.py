@@ -295,12 +295,20 @@ def propose_price_changes(
 
 
 def propose_bundles(
-    analysis: MenuAnalysis, discount_pct: Decimal = Decimal("0.12"), max_bundles: int = 3
+    analysis: MenuAnalysis,
+    discount_pct: Decimal = Decimal("0.12"),
+    max_bundles: int = 3,
+    min_margin_pct: Decimal = Decimal("0.55"),
 ) -> list[BundleProposal]:
     """Pair slow movers with proven sellers.
 
     A bundle only makes sense if it stays profitable after the discount, so each
     candidate is checked against the blended cost before being proposed.
+
+    The floor used to be a hardcoded 40% while the agent reported the
+    configured 55% alongside the results — so a bundle at 54.6% was published
+    under a guardrail that had never been applied to it. A report claiming a
+    constraint was enforced when it was not is worse than no report.
     """
     stars = analysis.by_class(MenuClass.STAR)
     laggards = analysis.by_class(MenuClass.DOG) + analysis.by_class(MenuClass.PUZZLE)
@@ -319,7 +327,7 @@ def propose_bundles(
             if bundle_price > 0
             else ZERO
         )
-        if margin_pct <= Decimal("0.40"):
+        if margin_pct < min_margin_pct:
             continue
 
         bundles.append(
