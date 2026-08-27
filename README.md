@@ -80,13 +80,15 @@ All thirteen are the same compiled LangGraph graph. Only the `AgentSpec` differs
 — prompt, tools, model tier, approval policy.
 
 ```
-perceive ─→ reason ─→ act ─┬─ nothing gated ─────────────→ record
+              ┌────────── more to do ──────────┐
+              ↓                                │
+perceive ─→ reason ─→ act ─┬─ nothing gated ───┴────────→ record
                            └─ await_approval ─→ commit ──→ record
 ```
 
 - **perceive** — loads this agent's read-only view of the world. No LLM, no writes.
 - **reason** — the LLM bound to this agent's tools, or its deterministic path when `LLM_PROVIDER=fake`.
-- **act** — runs the tools. A gated tool returns a *proposal* instead of acting.
+- **act** — runs the tools, and answers each one. A gated tool returns a *proposal* instead of acting.
 - **await_approval** — calls `interrupt()`. The graph checkpoints to Postgres and the process **unwinds**.
 - **commit** — performs the approved proposals in one transaction.
 - **record** — writes the audit trail and publishes domain events.
@@ -94,6 +96,16 @@ perceive ─→ reason ─→ act ─┬─ nothing gated ───────�
 Splitting `act` from `commit` is the point. Preparing an action and performing
 it are separate steps with a human in between, and the agent has no path from
 one to the other.
+
+The loop back from `act` to `reason` exists only on the live-model path, and it
+is the difference between an agent and a one-shot planner. A model that never
+sees its tool results cannot look up a table and then book it — the id it needs
+is in a result it was never shown — and its closing summary describes what it
+*meant* to do rather than what happened. The deterministic path does not loop:
+it decides its whole plan up front and already knows the outcome.
+
+The loop stops at the gate. When a tool proposes something gated the run parks,
+and no number of remaining iterations lets the model carry on past a human.
 
 Because the checkpointer is Postgres-backed, an approval **survives a deploy**.
 Verified by running an agent in one interpreter and approving from a second that
@@ -193,7 +205,7 @@ Docker daemon.
 make api         # FastAPI webhook receiver on :8000
 make worker      # Celery worker
 make beat        # Celery beat — the operating rhythm below
-make test        # 493 tests
+make test        # 525 tests
 make check       # everything CI runs: lint, format, typecheck, tests
 ```
 
@@ -207,6 +219,50 @@ restaurant-ai approvals --resolve <id>   # approve it
 restaurant-ai menu-cost MNU-NASILEMK     # plate cost, exploded
 restaurant-ai simulate-day --auto-approve
 ```
+
+---
+
+## Running it on real models
+
+Everything above runs with no key. To put the agents on Claude:
+
+```bash
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Then check the credentials and the request shape before setting thirteen agents
+going, which costs a few cents rather than a few dollars:
+
+```bash
+restaurant-ai live-check
+```
+
+`MODEL_REASONING` (`claude-opus-5`) takes the analytical agents — forecasting,
+pricing, reconciliation, scheduling, reorder. `MODEL_CONVERSATIONAL`
+(`claude-sonnet-5`) takes the guest-facing, high-volume ones.
+
+Two notes on the request shape, both of which are 400s rather than warnings:
+
+- **No `temperature`.** Opus 5 and Sonnet 5 removed the sampling parameters and
+  reject a request carrying one, so `LLM_TEMPERATURE` is unset by default. Set
+  it only against a model old enough to accept it.
+- **Adaptive thinking, not a budget.** `budget_tokens` is gone. `LLM_THINKING`
+  is `adaptive` — the model decides how hard to think per request, which suits
+  "what is on the menu" and "does this contain peanuts" equally. Thinking is
+  drawn from `LLM_MAX_TOKENS`, so that covers the reasoning as well as the answer.
+
+To watch one agent think, or to hold its choice against what the deterministic
+path would have done for the same restaurant on the same day:
+
+```bash
+restaurant-ai run-agent ordering --path model --transcript \
+  --payload '{"guest_message": "any nut-free mains?"}'
+restaurant-ai run-agent ordering --path deterministic
+```
+
+Each run reports its turns and token counts, and `agent_run.model` records which
+model answered — so what a day actually cost is a query, not an estimate.
 
 ---
 
@@ -356,6 +412,7 @@ The defaults run the whole platform simulated, so an empty `.env` works.
 
 ```bash
 LLM_PROVIDER=fake            # fake | anthropic
+LLM_THINKING=adaptive        # adaptive | disabled | off
 APPROVAL_CHANNEL=none        # slack | telegram | none
 SERVICE_LEVEL_Z=1.65         # 95% chance of not stocking out in a lead time
 PRICE_CHANGE_MAX_PCT=0.10    # no single price move exceeds this

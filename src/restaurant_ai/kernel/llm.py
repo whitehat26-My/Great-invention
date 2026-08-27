@@ -44,8 +44,8 @@ def get_model(tier: str = "conversational") -> BaseChatModel:
     settings = get_settings()
     if settings.llm_provider == "fake":
         raise FakeModelInUse(
-            "LLM_PROVIDER=fake: no chat model is available. Agents should use their "
-            "autonomous path, which the kernel selects automatically."
+            "LLM_PROVIDER=fake: no chat model is available. Agents fall back to "
+            "their deterministic path; set LLM_PROVIDER=anthropic to use a model."
         )
 
     model_name = settings.model_reasoning if tier == "reasoning" else settings.model_conversational
