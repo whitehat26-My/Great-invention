@@ -18,7 +18,15 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 # The whole suite runs on the deterministic fake model: no API key, no network.
-os.environ.setdefault("LLM_PROVIDER", "fake")
+#
+# Forced rather than defaulted, and the keys are blanked with it. `setdefault`
+# yields to an exported LLM_PROVIDER, and a developer with real credentials in
+# their .env would then have the suite quietly making live calls and billing
+# them for it. Tests that want a provider set one themselves, with a key that
+# is not real.
+os.environ["LLM_PROVIDER"] = "fake"
+os.environ["ANTHROPIC_API_KEY"] = ""
+os.environ["GOOGLE_API_KEY"] = ""
 
 
 def _database_available(url: str) -> bool:

@@ -42,6 +42,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
 
 from restaurant_ai import clock
+from restaurant_ai.config import get_settings
 from restaurant_ai.db.base import session_scope
 from restaurant_ai.db.models import AgentRunStatus
 from restaurant_ai.kernel import audit, llm
@@ -481,7 +482,7 @@ def _reason_with_model(spec: AgentSpec, state: AgentState) -> dict[str, Any]:
     bound = model.bind_tools(tools) if tools else model
 
     messages: list[Any] = [
-        SystemMessage(content=spec.system_prompt),
+        SystemMessage(content=_system_prompt(spec)),
         HumanMessage(content=_context_prompt(state)),
         *(state.get("messages") or []),
     ]
@@ -510,6 +511,28 @@ def _reason_with_model(spec: AgentSpec, state: AgentState) -> dict[str, Any]:
         # summary there would throw away the sentence that explains the run.
         update["summary"] = text
     return update
+
+
+def _system_prompt(spec: AgentSpec) -> str:
+    """The agent's own brief, on top of where it is working.
+
+    Which restaurant, which timezone, which currency: settings the platform has
+    always had and never told a model about. The order agent quoted a guest
+    "$49.80" for a dish priced in ringgit, because nothing in the prompt or the
+    context said otherwise and a bare number defaults to dollars.
+
+    This belongs here rather than in the thirteen individual prompts. It is a
+    property of the deployment, not of any one agent's job, and thirteen copies
+    of it is thirteen chances to change twelve of them.
+    """
+    settings = get_settings()
+    return (
+        f"You are working for {settings.restaurant_name}, a restaurant operating "
+        f"in the {settings.timezone} timezone.\n"
+        f"All money is in {settings.currency}. Write amounts as "
+        f"'{settings.currency} 24.90' — never with a currency symbol from "
+        f"somewhere else.\n\n"
+    ) + spec.system_prompt
 
 
 def _message_text(response: Any) -> str:

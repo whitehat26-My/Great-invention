@@ -102,6 +102,7 @@ def _build_anthropic(settings: Any, name: str) -> BaseChatModel:
         "model": name,
         "api_key": SecretStr(settings.anthropic_api_key),
         "max_tokens": settings.llm_max_tokens,
+        "max_retries": settings.llm_max_retries,
     }
     # Only send a sampling parameter if one was actually asked for. Claude
     # Opus 5 and Sonnet 5 reject the request outright if `temperature` is
@@ -136,6 +137,7 @@ def _build_google(settings: Any, name: str) -> BaseChatModel:
         "model": name,
         "google_api_key": SecretStr(settings.google_api_key),
         "max_output_tokens": settings.llm_max_tokens,
+        "max_retries": settings.llm_max_retries,
     }
     # Same rule as Anthropic, for the same reason: Gemini 3 Flash uses fixed
     # sampling and discards a temperature it is sent, warning once per call

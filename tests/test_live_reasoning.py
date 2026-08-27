@@ -527,3 +527,61 @@ class TestFailures:
         assert run_row is not None
         assert run_row.status == AgentRunStatus.FAILED
         assert "explode" in run_row.summary
+
+
+class TestWhatTheAuditTrailRecords:
+    def test_the_model_that_actually_answered_is_recorded(self, db, model, monkeypatch):
+        """`agent_run.model` is the only record of which model decided something.
+
+        It was read off the Anthropic settings whatever the provider, so every
+        Gemini run was filed as `claude-opus-5`.
+        """
+        from restaurant_ai.config import get_settings, reset_settings_cache
+
+        monkeypatch.setenv("LLM_PROVIDER", "google")
+        monkeypatch.setenv("GOOGLE_API_KEY", "k")
+        reset_settings_cache()
+        model(lambda messages, turn: says("done"))
+
+        outcome = run(spec("audit_model"))
+        run_row = db.get(AgentRun, outcome.run_id)
+        assert run_row is not None
+        assert run_row.model == get_settings().google_model_conversational
+        assert not run_row.model.startswith("claude")
+        reset_settings_cache()
+
+    def test_the_fake_provider_is_recorded_as_fake(self, db):
+        outcome = run(spec("audit_fake"))
+        run_row = db.get(AgentRun, outcome.run_id)
+        assert run_row is not None and run_row.model == "fake"
+
+
+class TestWhereTheRestaurantIs:
+    """Settings the platform has always had and never told a model about."""
+
+    def test_the_operating_context_precedes_the_agents_brief(self):
+        from restaurant_ai.config import get_settings
+        from restaurant_ai.kernel.graph import _system_prompt
+        from restaurant_ai.kernel.registry import get_agent
+
+        settings = get_settings()
+        agent = get_agent("ordering")
+        prompt = _system_prompt(agent)
+
+        assert settings.restaurant_name in prompt
+        assert settings.currency in prompt
+        assert settings.timezone in prompt
+        # The agent's own brief still follows it, intact.
+        assert prompt.endswith(agent.system_prompt)
+
+    def test_the_model_is_told_which_currency(self, db, model):
+        """It quoted a guest "$49.80" for a dish priced in ringgit.
+
+        Nothing in the prompt said otherwise, and a bare number defaults to
+        dollars.
+        """
+        stub = model(lambda messages, turn: says("ok"))
+        run(spec("currency"))
+        system = str(stub.seen[0][0].content)
+        assert "MYR" in system
+        assert "currency symbol from somewhere else" in system

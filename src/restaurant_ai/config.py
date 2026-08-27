@@ -50,12 +50,17 @@ class Settings(BaseSettings):
     model_conversational: str = "claude-sonnet-5"
 
     # --- Google ---
-    # Both tiers default to Flash because the Gemini free tier covers Flash and
+    # Both tiers are Flash because the Gemini free tier covers Flash and
     # Flash-Lite only. Anyone with billing attached can point the reasoning tier
     # at a Pro model; the free tier cannot.
+    #
+    # They are deliberately *different* Flash models. The free-tier quota is
+    # `GenerateRequestsPerMinutePerProjectPerModel` — five requests a minute,
+    # counted per model — so putting both tiers on one id makes the thirteen
+    # agents queue behind each other for no reason.
     google_api_key: str = ""
     google_model_reasoning: str = "gemini-3.6-flash"
-    google_model_conversational: str = "gemini-3.6-flash"
+    google_model_conversational: str = "gemini-3.5-flash"
     # Gemini 3 dropped `thinking_budget` for a thinking *level*. Unset leaves
     # the model on its own default, which is the sane starting point.
     # `restaurant-ai models` lists what a key can actually see — model ids move,
@@ -80,6 +85,13 @@ class Settings(BaseSettings):
     # turns it off; "off" sends no thinking field at all, which is what a
     # pre-4.6 model needs.
     llm_thinking: Literal["adaptive", "disabled", "off"] = "adaptive"
+    # A rate-limited provider is not an error, it is a queue. The Gemini free
+    # tier allows 5 requests/min *per model* and asks for waits of up to a
+    # minute; the client defaults (6 for Gemini, 2 for Claude) back off for
+    # about half that and then give up, which fails the run and loses the work.
+    # This platform fires several agents together on the morning and end-of-day
+    # schedules, so that is not a rare case.
+    llm_max_retries: int = 10
     agent_max_tool_iterations: int = 6
 
     @field_validator("llm_temperature", "google_reasoning_effort", mode="before")
