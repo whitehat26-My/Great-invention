@@ -217,3 +217,45 @@ def covers_on(session: Session, business_date: date) -> int:
         )
     ).scalar_one()
     return int(total or 0)
+
+
+def units_per_cover(session: Session, days: int = 28, until: date | None = None) -> Decimal:
+    """Average dishes and drinks per guest, from recent trading.
+
+    The conversion between what the forecaster predicts (units) and what the
+    roster is sized against (people in the room). Measured rather than assumed,
+    because it moves with the menu and the channel mix.
+
+    The two sums are taken separately on purpose: joining lines to headers and
+    summing party_size counts each order's guests once per line, which inflates
+    covers by the basket size and inverts the ratio.
+    """
+    until = until or date.today()
+    since = until - timedelta(days=days)
+    window = (
+        OrderHeader.business_date >= since,
+        OrderHeader.business_date < until,
+        OrderHeader.status != OrderStatus.VOID,
+    )
+
+    units = Decimal(
+        str(
+            session.execute(
+                select(func.coalesce(func.sum(OrderLine.quantity), 0))
+                .select_from(OrderLine)
+                .join(OrderHeader, OrderLine.order_id == OrderHeader.id)
+                .where(*window, OrderLine.is_voided.is_(False))
+            ).scalar_one()
+        )
+    )
+    covers = Decimal(
+        str(
+            session.execute(
+                select(func.coalesce(func.sum(OrderHeader.party_size), 0)).where(*window)
+            ).scalar_one()
+        )
+    )
+
+    if covers <= 0 or units <= 0:
+        return Decimal("1")
+    return (units / covers).quantize(Decimal("0.0001"))

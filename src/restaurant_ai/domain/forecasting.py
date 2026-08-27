@@ -62,7 +62,23 @@ class ItemForecastResult:
 class ForecastResult:
     business_date: date
     items: dict[str, ItemForecastResult] = field(default_factory=dict)
-    total_covers: int = 0
+    total_units: int = 0
+    """Forecast dishes and drinks, NOT guests.
+
+    These are not interchangeable and confusing them is expensive: a party of
+    two ordering a main each and a drink to share is two covers and three units.
+    Sizing a roster off units overstates the room by a third and staffs
+    accordingly. Use ``covers`` for anything measuring how many people are in.
+    """
+
+    units_per_cover: Decimal = Decimal("1")
+
+    @property
+    def covers(self) -> int:
+        """Guests, derived from units at the observed basket size."""
+        if self.units_per_cover <= 0:
+            return self.total_units
+        return int(Decimal(self.total_units) / self.units_per_cover)
 
     @property
     def quantities(self) -> dict[str, Decimal]:
@@ -121,7 +137,7 @@ def forecast_day(
             method=method,
         )
 
-    result.total_covers = int(sum(i.forecast_qty for i in result.items.values()))
+    result.total_units = int(sum(i.forecast_qty for i in result.items.values()))
     return result
 
 

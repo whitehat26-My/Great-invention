@@ -189,7 +189,7 @@ def build_prep_plan(
         (items[item_id].price * qty for item_id, qty in quantities.items()), ZERO
     )
     plan.run_id = context.run_id
-    plan.forecast_covers = result.total_covers
+    plan.forecast_covers = result.total_units
     plan.forecast_revenue = forecast_revenue.quantize(Decimal("0.01"))
 
     lines: list[dict[str, Any]] = []
@@ -247,7 +247,7 @@ def build_prep_plan(
     publish(
         Event(
             Topic.PREP_PLAN_READY,
-            {"business_date": target.isoformat(), "covers": result.total_covers},
+            {"business_date": target.isoformat(), "units": result.total_units},
             source_run_id=context.run_id,
         ),
         session=session,
@@ -260,7 +260,7 @@ def build_prep_plan(
     short_lines = [line for line in lines if line["short_of_raw"]]
     return {
         "business_date": target.isoformat(),
-        "forecast_covers": result.total_covers,
+        "forecast_units": result.total_units,
         "forecast_revenue": str(plan.forecast_revenue),
         "ingredient_lines": len(lines),
         "short_of_raw_material": len(short_lines),

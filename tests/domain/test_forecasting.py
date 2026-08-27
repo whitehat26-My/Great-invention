@@ -197,3 +197,53 @@ class TestTrendIsSeasonalityFree:
         ]
         result = forecast_day(rows, date(2026, 7, 28))
         assert result.items["item-1"].trend_factor == D("1")
+
+
+class TestUnitsAreNotCovers:
+    """Dishes forecast and guests in the room are different quantities.
+
+    Confusing them cost a third of a roster: the scheduler sized itself against
+    204 forecast dishes for a day that seated 154 people, and staffed for the
+    larger number.
+    """
+
+    def test_total_units_counts_dishes(self):
+        history = [
+            DailySales(date(2026, 6, 1) + timedelta(days=o), item, D("10"))
+            for o in range(30)
+            for item in ("a", "b", "c")
+        ]
+        result = forecast_day(history, date(2026, 7, 5))
+        assert result.total_units == sum(int(i.forecast_qty) for i in result.items.values())
+
+    def test_covers_divides_by_the_basket(self):
+        history = [
+            DailySales(date(2026, 6, 1) + timedelta(days=o), "a", D("100")) for o in range(30)
+        ]
+        result = forecast_day(history, date(2026, 7, 5))
+        result.units_per_cover = D("2")
+        assert result.covers == result.total_units // 2
+
+    def test_covers_is_fewer_than_units_when_people_order_more_than_one_thing(self):
+        history = [
+            DailySales(date(2026, 6, 1) + timedelta(days=o), "a", D("100")) for o in range(30)
+        ]
+        result = forecast_day(history, date(2026, 7, 5))
+        result.units_per_cover = D("1.45")
+        assert result.covers < result.total_units
+
+    def test_a_basket_of_one_leaves_covers_equal_to_units(self):
+        history = [
+            DailySales(date(2026, 6, 1) + timedelta(days=o), "a", D("50")) for o in range(30)
+        ]
+        result = forecast_day(history, date(2026, 7, 5))
+        result.units_per_cover = D("1")
+        assert result.covers == result.total_units
+
+    def test_a_nonsense_basket_does_not_divide_by_zero(self):
+        history = [
+            DailySales(date(2026, 6, 1) + timedelta(days=o), "a", D("50")) for o in range(30)
+        ]
+        result = forecast_day(history, date(2026, 7, 5))
+        result.units_per_cover = D("0")
+        assert result.covers == result.total_units

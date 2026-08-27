@@ -63,7 +63,7 @@ four stop.
 ### Workforce
 | Agent | What it does |
 |---|---|
-| **Shift Scheduling** | Converts the demand forecast into labour hours and fits a roster inside availability, hours caps and rest rules |
+| **Shift Scheduling** | Shapes shifts against the hourly demand curve and fits a roster inside availability, hours caps and rest rules |
 | **Staff Assistant & Onboarding** | Answers SOP and recipe questions; validates and routes shift swaps |
 
 ### Finance
@@ -193,7 +193,7 @@ Docker daemon.
 make api         # FastAPI webhook receiver on :8000
 make worker      # Celery worker
 make beat        # Celery beat — the operating rhythm below
-make test        # 427 tests
+make test        # 493 tests
 make check       # lint + typecheck + test
 ```
 
@@ -299,7 +299,7 @@ src/restaurant_ai/
 
 ## Testing
 
-427 tests. `pytest` runs them all against a real PostgreSQL with no API key and
+493 tests. `pytest` runs them all against a real PostgreSQL with no API key and
 no network.
 
 PostgreSQL rather than SQLite because the schema uses JSONB, partial constraints
@@ -325,6 +325,13 @@ Some things it has caught:
 - The end-of-day report called a 34% prime cost "healthy" when labour was simply
   missing. Prime cost *is* COGS plus labour; reporting it without labour tells
   an owner their worst month was their best.
+- The scheduler sized the roster from `forecast.total_covers`, which actually
+  held forecast *dishes*. At a 1.4-dish basket that overstates the room by a
+  third and staffs accordingly. The field is now `total_units`, with `covers`
+  derived from the measured basket size.
+- The roster had no daily hours ceiling. Two adjacent shifts are not an overlap
+  and neither breaks the weekly cap, so one chef was handed 10:00–19:00 and then
+  the 19:00–00:00 close — a fourteen-hour day.
 - The pacing agent crashed the moment any KDS ticket existed — a single-column
   `select(...).scalars()` yields values, not rows, so its re-fire guard was
   doing `str.order_line_id`. Every other agent test ran against a quiet kitchen,
@@ -352,6 +359,32 @@ APPROVAL_VALUE_THRESHOLD=250.00
 `SERVICE_LEVEL_Z` is the one dial worth understanding: it is the
 waste-versus-stockout trade-off. Raising it carries more stock and wastes more;
 lowering it 86s dishes on a Friday night.
+
+### Tuning the roster
+
+Labour is the other half of prime cost, and `domain/scheduling.py` holds the
+dials:
+
+| Constant | Effect |
+|---|---|
+| `COVERS_PER_HOUR` | How many guests one person of a role handles. Raising it thins the roster |
+| `MINIMUM_HEADCOUNT` | Who must be present whenever the doors are open, regardless of volume |
+| `DISCRETIONARY_ROUNDING` | How much of a person's work must exist before a host, barista or porter is called in at all |
+| `MIN_SHIFT_HOURS` / `MAX_SHIFT_HOURS` | Shift geometry — nobody comes in for ninety minutes |
+| `MAX_DAILY_HOURS` | Ceiling on one person's day across every shift they hold |
+| `OPEN_HOUR` / `CLOSE_HOUR` | Trading hours. The single biggest lever on a quiet day |
+
+Roles are sized **hour by hour against the demand curve**, then packed into real
+shifts by covering the busiest uncovered hour first. That produces the shape a
+manager would draw by hand — an opening shift, extra bodies across the peaks, a
+closing shift — instead of putting everyone on for the whole day.
+
+The two settings that matter most are the least obvious. `DISCRETIONARY_ROUNDING`
+exists because `ceil()` on a trickle of demand turns 0.13 of a host into a whole
+one, which is what put a dedicated host, barista and porter on the floor for a
+thirteen-hour day. And a quiet day *should* look bad: sixty covers across twelve
+trading hours is unprofitable on labour whatever the roster does, and the right
+lever is opening hours, not thinner staffing.
 
 ---
 

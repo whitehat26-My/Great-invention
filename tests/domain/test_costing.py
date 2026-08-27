@@ -5,6 +5,7 @@ under test is fundamentally about recursive relational data: a plated dish
 consuming sub-recipes that themselves consume raw ingredients.
 """
 
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -186,3 +187,50 @@ class TestAllergens:
 
     def test_item_without_recipe(self, db):
         assert menu_item_allergens(db, "no-such-item") == set()
+
+
+class TestUnitsPerCover:
+    """The units-to-covers conversion the roster is sized on."""
+
+    def test_is_a_plausible_basket_size(self, db):
+        from restaurant_ai import clock
+        from restaurant_ai.agents.common import units_per_cover
+
+        basket = units_per_cover(db, days=56, until=clock.today())
+        # Under one would mean guests sharing a single dish between them; over
+        # four would mean everyone ordering a banquet. Either points at the
+        # join-inflation bug this replaced.
+        assert D("1.0") < basket < D("4.0"), f"{basket} dishes per guest is not plausible"
+
+    def test_counts_each_order_s_guests_once(self, db):
+        # Summing party_size across joined order lines counts a table once per
+        # dish, which inverts the ratio.
+        from sqlalchemy import func, select
+
+        from restaurant_ai import clock
+        from restaurant_ai.agents.common import units_per_cover
+        from restaurant_ai.db.models import OrderHeader, OrderLine
+
+        until = clock.today()
+        since = until - timedelta(days=56)
+        units = db.execute(
+            select(func.sum(OrderLine.quantity))
+            .select_from(OrderLine)
+            .join(OrderHeader, OrderLine.order_id == OrderHeader.id)
+            .where(OrderHeader.business_date >= since, OrderHeader.business_date < until)
+        ).scalar_one()
+        covers = db.execute(
+            select(func.sum(OrderHeader.party_size)).where(
+                OrderHeader.business_date >= since, OrderHeader.business_date < until
+            )
+        ).scalar_one()
+
+        expected = (D(str(units)) / D(str(covers))).quantize(D("0.0001"))
+        assert units_per_cover(db, days=56, until=until) == expected
+
+    def test_no_trading_history_returns_one(self, db):
+        from datetime import date as _date
+
+        from restaurant_ai.agents.common import units_per_cover
+
+        assert units_per_cover(db, days=1, until=_date(1990, 1, 1)) == D("1")

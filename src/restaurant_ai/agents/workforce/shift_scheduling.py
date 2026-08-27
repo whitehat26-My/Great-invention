@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from restaurant_ai import clock
-from restaurant_ai.agents.common import sales_history
+from restaurant_ai.agents.common import sales_history, units_per_cover
 from restaurant_ai.db.models import (
     Availability,
     Shift,
@@ -127,6 +127,7 @@ def build_week(
         return {"shifts": 0, "note": "No sales history; cannot size the roster."}
 
     profile = weekday_profile(history)
+    basket = units_per_cover(session, until=context.business_date)
     people = _staff_members(session)
     if not people:
         return {"shifts": 0, "note": "No active staff to roster."}
@@ -140,9 +141,17 @@ def build_week(
             continue
 
         forecast = forecast_day(history, day)
-        covers = forecast.total_covers or int(
-            sum(r.quantity for r in history[-30:]) / max(len(history[-30:]), 1)
-        )
+        forecast.units_per_cover = basket
+        # Covers, not units. The forecaster predicts dishes; the roster is sized
+        # by how many people are in the room, and at a 1.4-dish basket those
+        # differ by a third.
+        covers = forecast.covers
+        if not covers:
+            # No usable forecast: fall back to the recent daily average, still
+            # converted from dishes to guests.
+            recent = history[-30:]
+            mean_units = sum((r.quantity for r in recent), ZERO) / Decimal(max(len(recent), 1))
+            covers = int(mean_units / (basket if basket > 0 else Decimal("1")))
         # Nudge by how this weekday usually trades.
         covers = int(Decimal(covers) * profile.get(day.weekday(), Decimal("1")))
 
