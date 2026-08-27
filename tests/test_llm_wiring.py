@@ -86,12 +86,22 @@ class TestToolBinding:
             assert "properties" in schema
             assert langchain_tool.description
 
-    def test_tool_arguments_are_described(self):
-        # The model chooses arguments from these descriptions.
-        tool = _as_langchain_tool(get_agent("ordering").tool("check_allergens"))
-        properties = tool.args_schema.model_json_schema()["properties"]
-        assert "sku" in properties and "allergens" in properties
-        assert all("description" in p for p in properties.values())
+    @pytest.mark.parametrize("name", sorted(all_agents()))
+    def test_every_tool_argument_is_described(self, name):
+        """The model has nothing else to go on.
+
+        An undescribed `party_size` is one the model has to infer from its name,
+        and the difference between a party of two and a party of six is which
+        table gets held.
+        """
+        undescribed = []
+        for tool in get_agent(name).tools:
+            schema = _as_langchain_tool(tool).args_schema.model_json_schema()
+            for argument, meta in (schema.get("properties") or {}).items():
+                # A $ref or allOf carries its description on the nested model.
+                if not any(k in meta for k in ("description", "$ref", "allOf")):
+                    undescribed.append(f"{tool.name}.{argument}")
+        assert not undescribed, f"{name}: {', '.join(undescribed)}"
 
 
 class TestPromptAssembly:

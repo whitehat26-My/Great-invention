@@ -40,8 +40,14 @@ class AnalyseArgs(BaseModel):
 
 
 class ProposeArgs(BaseModel):
-    window_days: int = Field(28)
-    max_proposals: int = Field(5)
+    window_days: int = Field(28, description="Trading window to analyse.")
+    max_proposals: int = Field(
+        5,
+        description=(
+            "Most price changes to propose at once. Moving a lot of the menu in "
+            "one go is what regulars notice."
+        ),
+    )
 
 
 def _performances(session, business_date, window_days: int) -> list[ItemPerformance]:

@@ -71,9 +71,18 @@ class AllergenCheckArgs(BaseModel):
 class PlaceOrderArgs(BaseModel):
     channel: str = Field("phone", description="phone | drive_thru | kiosk | takeaway")
     items: str = Field(..., description="Comma-separated SKU:quantity pairs, e.g. 'MNU-KOPIO:2'.")
-    party_size: int = Field(1)
-    guest_phone: str | None = None
-    notes: str | None = None
+    party_size: int = Field(1, description="How many people the order is for.")
+    guest_phone: str | None = Field(
+        None, description="Contact number, for a takeaway or a callback."
+    )
+    notes: str | None = Field(
+        None,
+        description=(
+            "What the guest asked for that is not a SKU: allergies, "
+            "substitutions, how they want it cooked. The kitchen reads this, so "
+            "put an allergy here in the guest's own words."
+        ),
+    )
 
 
 def perceive(context: ToolContext) -> dict[str, Any]:

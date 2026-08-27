@@ -56,12 +56,27 @@ class FindTableArgs(BaseModel):
 
 
 class BookArgs(BaseModel):
-    guest_name: str
-    party_size: int
+    guest_name: str = Field(..., description="Name to hold the table under.")
+    party_size: int = Field(
+        ...,
+        description=(
+            "Number of people who will actually sit down, children included. "
+            "This picks the table, so guessing it wrong either wastes a six-top "
+            "or seats a party that does not fit."
+        ),
+    )
     starts_at: str = Field(..., description="ISO 8601 start time.")
-    guest_phone: str | None = None
-    special_requests: str | None = None
-    source: str = "whatsapp"
+    guest_phone: str | None = Field(None, description="Contact number, if the guest gave one.")
+    special_requests: str | None = Field(
+        None,
+        description=(
+            "Anything the guest told you: allergies, the occasion, a table "
+            "preference. Allergies go here verbatim — the kitchen reads it."
+        ),
+    )
+    source: str = Field(
+        "whatsapp", description="Where the booking came from: whatsapp, web or phone."
+    )
 
 
 class OverrunArgs(BaseModel):
