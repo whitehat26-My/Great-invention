@@ -233,10 +233,21 @@ LLM_PROVIDER=google
 GOOGLE_API_KEY=...
 ```
 
-The free tier gives Flash models roughly 15 requests/min and 1,500/day. A full
-13-agent pass is 30–40 requests, so you can run it forty times over while
-fixing prompts. The free tier covers **Flash and Flash-Lite only** — both tiers
-default to Flash for that reason, and a Pro model needs billing attached.
+The free tier covers **Flash and Flash-Lite only**, which is why both tiers
+default to Flash; a Pro model needs billing attached.
+
+Budget for the rate limit rather than the token cost. The quota that bites is
+`GenerateRequestsPerMinutePerProjectPerModel`, and measured against a real key
+it is **5 requests a minute**, not the 15 the docs suggest. A 13-agent pass is
+40–50 requests, so it takes about twenty minutes of mostly waiting. Two things
+make that bearable, and both are defaults:
+
+- The two tiers use **different Flash ids**. The quota is counted per model, so
+  sharing one makes the thirteen agents queue behind each other for nothing.
+- `LLM_MAX_RETRIES=10`. A rate-limited provider is a queue, not an error — but
+  the client defaults (6 for Gemini, 2 for Claude) back off for about half the
+  wait a free tier asks for and then give up, which fails the run and loses the
+  work. Three agents died that way on the first pass.
 
 **Claude.** From [console.anthropic.com](https://console.anthropic.com/settings/keys):
 
@@ -277,6 +288,14 @@ warnings rather than anything subtle:
   `LLM_THINKING=adaptive`. Gemini 3 dropped `budget_tokens` for a thinking
   *level*, so it takes `GOOGLE_REASONING_EFFORT=minimal|low|medium|high` and
   uses the model's own default when unset.
+
+One thing that is *not* a difference, having been checked rather than assumed:
+the google-genai SDK announces "AFC is enabled with max remote calls: 10" on
+every call. Automatic function calling is absent from the actual request —
+tools go as declarations, not callables — so the SDK does not execute the stub
+functions the graph binds. Had it done so, every agent would have received
+`"Tool execution is handled by the agent runtime."` as its tool result, and it
+would have looked like a model problem rather than a wiring one.
 
 Gemini's function declarations are an OpenAPI 3.0 subset, which is the usual
 rough edge — nine tool arguments here are `str | None` and serialise as
