@@ -328,6 +328,66 @@ which model answered — so what a day actually cost is a query, not an estimate
 
 ---
 
+## Connecting Telegram
+
+Approvals are the first thing worth connecting, because they are how you stay in
+control of five agents that can spend money or publish. And Telegram is the one
+integration that needs **no hosting at all**.
+
+1. Message [@BotFather](https://t.me/BotFather), `/newbot`, and copy the token.
+2. Message your new bot once, so a chat exists to send to.
+3. Set `TELEGRAM_BOT_TOKEN`, `APPROVAL_CHANNEL=telegram`, and
+   `APPROVAL_API_KEY` (any long random string — `python -c "import secrets;
+   print(secrets.token_urlsafe(32))"`).
+4. `restaurant-ai telegram-check` — confirms the token, names the bot, and sends
+   a test card. It also tells you `TELEGRAM_CHAT_ID` if it is not set yet.
+5. `restaurant-ai telegram-listen` — takes decisions. Leave it running.
+
+That is the whole setup. No public URL, no TLS certificate, no DNS: the listener
+asks Telegram for updates rather than waiting to be called, so it works from a
+laptop behind a router.
+
+The webhook path is the right answer once the service has a public address —
+point Telegram at `/approvals/telegram/callback` and set
+`TELEGRAM_WEBHOOK_SECRET`. Telegram permits a webhook **or** polling, never
+both; `telegram-listen` refuses rather than hanging if it finds one registered.
+
+### Who is allowed to press the button
+
+`TELEGRAM_CHAT_ID` is an allow-list, not just an address. A bot token is a
+bearer credential and any chat the bot is in can press its buttons, so a press
+from anywhere else is refused and logged. With no chat configured, nobody is
+permitted — including you.
+
+---
+
+## The approval endpoints are closed by default
+
+These all fail closed: **a missing secret means the endpoint refuses to serve,
+not that it serves anyone.**
+
+| Endpoint | Guard |
+|---|---|
+| `GET /approvals` | `APPROVAL_API_KEY` via `X-API-Key` |
+| `POST /approvals/{id}/resolve` | `APPROVAL_API_KEY` |
+| `POST /agents/{name}/run` | `APPROVAL_API_KEY` |
+| `POST /approvals/telegram/callback` | `TELEGRAM_WEBHOOK_SECRET` |
+| `POST /approvals/slack/interactivity` | `SLACK_SIGNING_SECRET` |
+| `GET /health`, `/ready` | open — something has to be able to watch the service |
+
+This is not hypothetical tidying. Before it, `GET /approvals` listed every
+pending request with its id and the Telegram callback resolved any id it was
+handed, both unauthenticated. Demonstrated against the running app: eleven
+approvals listed and one approved as `not-the-owner`, with no credentials at
+all. The gate is the platform's entire safety story, and it was worth exactly as
+much as the endpoint recording the answer — which was nothing.
+
+Slack's verifier had the same shape in miniature: it returned early when no
+signing secret was set, on the reasoning that this was local development. In any
+deployment that missed the line, it meant anyone could approve anything.
+
+---
+
 ## The operating rhythm
 
 Celery beat, in the restaurant's own timezone (a `23:30` that fires at `07:30`

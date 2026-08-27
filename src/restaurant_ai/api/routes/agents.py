@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from restaurant_ai.api.auth import require_api_key
 from restaurant_ai.db.base import session_scope
 from restaurant_ai.db.models import AgentAction, AgentRun
 from restaurant_ai.kernel.registry import all_agents, get_agent
@@ -43,7 +44,7 @@ async def list_agents() -> dict[str, Any]:
     }
 
 
-@router.post("/{name}/run", status_code=status.HTTP_200_OK)
+@router.post("/{name}/run", status_code=status.HTTP_200_OK, dependencies=[Depends(require_api_key)])
 async def trigger_run(name: str, request: RunRequest) -> dict[str, Any]:
     """Run an agent now.
 

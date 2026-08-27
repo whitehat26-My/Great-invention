@@ -137,6 +137,77 @@ def list_models() -> None:
     typer.echo("\n  (* = configured for a tier)")
 
 
+@app.command("telegram-check")
+def telegram_check(
+    send: bool = typer.Option(True, help="Send a test card to the configured chat."),
+) -> None:
+    """Verify the bot token and chat id, and prove a card actually arrives."""
+    from restaurant_ai.approvals.telegram import api, describe_bot
+    from restaurant_ai.config import get_settings
+
+    settings = get_settings()
+    typer.echo(f"\n  token      {'set' if settings.telegram_bot_token else 'NOT SET'}")
+    typer.echo(f"  chat id    {settings.telegram_chat_id or 'NOT SET'}")
+    typer.echo(f"  webhook secret  {'set' if settings.telegram_webhook_secret else 'not set'}")
+
+    if not settings.telegram_bot_token:
+        typer.echo("\n  Get a token from @BotFather, then set TELEGRAM_BOT_TOKEN.", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        described = describe_bot()
+    except Exception as exc:
+        typer.echo(f"\n  FAILED  {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"\n  bot        @{described['username']} ({described['name']})")
+    if described["webhook_url"]:
+        typer.echo(f"  webhook    {described['webhook_url']}")
+        typer.echo("  note       a webhook is registered, so telegram-listen will refuse")
+    else:
+        typer.echo("  webhook    none — long polling is available")
+
+    if not send:
+        return
+    if not settings.telegram_chat_id:
+        typer.echo("\n  TELEGRAM_CHAT_ID is not set, so there is nowhere to send.", err=True)
+        typer.echo("  Message your bot, then read the chat id from getUpdates.", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        api(
+            "sendMessage",
+            chat_id=settings.telegram_chat_id,
+            text=(f"*{settings.restaurant_name}* is connected.\nApproval cards will arrive here."),
+            parse_mode="Markdown",
+        )
+    except Exception as exc:
+        typer.echo(f"\n  send FAILED  {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo("\n  sent a test message — check the chat.")
+
+
+@app.command("telegram-listen")
+def telegram_listen(
+    rounds: int = typer.Option(None, help="Stop after this many polls. Default: forever."),
+) -> None:
+    """Take approval decisions from Telegram without hosting anything.
+
+    Long polling, so no public URL, no certificate and no DNS — this works from
+    a laptop behind a router. Telegram allows a webhook or polling, never both.
+    """
+    from restaurant_ai.approvals.listener import listen
+
+    typer.echo("\n  listening for approval decisions — ctrl-c to stop\n")
+    try:
+        listen(on_event=lambda line: typer.echo(f"  {line}"), max_rounds=rounds)
+    except KeyboardInterrupt:
+        typer.echo("\n  stopped.")
+    except Exception as exc:
+        typer.echo(f"  {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
 @app.command("live-check")
 def live_check(
     prompt: str = typer.Option(

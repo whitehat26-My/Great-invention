@@ -137,15 +137,22 @@ def send_approval_card(request: dict[str, Any]) -> str | None:
 def verify_slack_request(body: bytes, headers: dict[str, str]) -> None:
     """Verify Slack's request signature.
 
-    Skipped when no signing secret is configured, which is the local-development
-    case; in any deployment where Slack is actually wired up the secret exists
-    and this is enforced.
+    Used to return early when no signing secret was configured, on the reasoning
+    that this was the local-development case. But the endpoint behind it
+    resolves approvals, so "no secret" meant "anyone may approve anything" in
+    any deployment where that line of .env was missed. It refuses instead.
     """
+    from fastapi import HTTPException, status
+
     settings = get_settings()
     if not settings.slack_signing_secret:
-        return
-
-    from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "SLACK_SIGNING_SECRET is not configured, so this endpoint is "
+                "closed. Set it before exposing this service."
+            ),
+        )
 
     timestamp = headers.get("x-slack-request-timestamp", "")
     signature = headers.get("x-slack-signature", "")
