@@ -68,3 +68,8 @@ markers = [
     "integration: end-to-end test across API/worker/agents",
 ]
 filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff.lint.per-file-ignores]
+# Keyword-style dict() reads better than a literal for these test fixture
+# builders, where the keys mirror dataclass field names.
+"tests/**" = ["C408"]

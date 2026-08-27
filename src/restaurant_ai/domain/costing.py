@@ -120,7 +120,10 @@ def explode_recipe(
         for ing_id, amount in nested.items():
             totals[ing_id] = totals.get(ing_id, ZERO) + amount
 
-    return totals
+    # Drop zero rows. A zero-quantity requirement is not a fact about the
+    # recipe, and stock_movement carries a `quantity <> 0` CHECK that such a
+    # row would violate the moment the stock agent tried to write it.
+    return {ing_id: amount for ing_id, amount in totals.items() if amount > 0}
 
 
 def explode_menu_item(
