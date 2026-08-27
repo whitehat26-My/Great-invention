@@ -28,12 +28,14 @@ from restaurant_ai.kernel.state import Proposal
 def needs_approval(tool: ToolSpec, result: dict[str, Any]) -> bool:
     """Whether this particular invocation has to stop for a human.
 
-    A tool declared ``requires_approval`` always does. Anything else is gated
-    only once its value crosses the configured threshold, so routine small
-    actions stay autonomous and only consequential ones interrupt someone.
+    A tool declared ``requires_approval`` does, unless its ``gate_when``
+    predicate says this particular invocation produced nothing to approve.
+    Anything else is gated only once its value crosses the configured threshold,
+    so routine small actions stay autonomous and only consequential ones
+    interrupt someone.
     """
     if tool.requires_approval:
-        return True
+        return tool.should_gate(result)
     threshold = get_settings().approval_value_threshold
     return threshold > 0 and tool.value_of(result) >= threshold
 

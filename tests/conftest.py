@@ -58,17 +58,33 @@ def seeded(engine: Engine) -> None:
 
 
 @pytest.fixture
-def db(engine: Engine, seeded: None) -> Iterator[Session]:
+def db(engine: Engine, seeded: None, monkeypatch: pytest.MonkeyPatch) -> Iterator[Session]:
     """A session in a transaction that is always rolled back.
 
-    Tests can write freely — purchase orders, journals, stock movements — and
-    the database is unchanged afterwards.
+    The application's own ``session_scope()`` is redirected onto this same
+    connection for the duration of the test. Without that, an agent under test
+    opens its own session against the global engine, commits outside the test's
+    transaction, and leaves purchase orders and stock movements behind — which
+    then change what the *next* test sees. That is not hypothetical: it silently
+    turned the purchase-order approval tests into skips, because a previous
+    test's committed orders counted as stock already on order and pushed every
+    ingredient back above its reorder point.
+
+    ``join_transaction_mode="create_savepoint"`` means a commit inside the
+    application code releases a savepoint rather than ending the outer
+    transaction, so the rollback below still undoes everything.
     """
     connection = engine.connect()
     transaction = connection.begin()
-    session = Session(
+
+    import restaurant_ai.db.base as db_base
+
+    bound = sessionmaker(
         bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint"
     )
+    monkeypatch.setattr(db_base, "get_sessionmaker", lambda: bound)
+
+    session = bound()
     try:
         yield session
     finally:

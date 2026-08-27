@@ -51,9 +51,27 @@ class ToolSpec:
     fn: Callable[..., dict[str, Any]]
     args_schema: type | None = None
     requires_approval: bool = False
+    # Optional predicate on the result: when it returns False the invocation is
+    # not gated, because there is nothing to approve. A reorder sweep that finds
+    # everything in stock still "drafts purchase orders", it just drafts none —
+    # and waking someone in Slack to approve an empty order is how people learn
+    # to rubber-stamp the alerts that do matter.
+    gate_when: Callable[[dict[str, Any]], bool] | None = None
     approval_value: Callable[[dict[str, Any]], Decimal] | None = None
     approval_summary: Callable[[dict[str, Any]], str] | None = None
     approval_detail: Callable[[dict[str, Any]], str] | None = None
+
+    def should_gate(self, result: dict[str, Any]) -> bool:
+        if not self.requires_approval:
+            return False
+        if self.gate_when is None:
+            return True
+        try:
+            return bool(self.gate_when(result))
+        except Exception:
+            # A broken predicate must fail toward asking a human, never toward
+            # acting unsupervised.
+            return True
 
     def value_of(self, result: dict[str, Any]) -> Decimal:
         if self.approval_value is None:

@@ -198,11 +198,20 @@ def build_graph(spec: AgentSpec):
                 for proposal in approved:
                     tool = spec.tool(proposal.tool_name)
                     committer = getattr(tool, "commit_fn", None) if tool else None
+                    # The approver's identity lives on the proposal, not in the
+                    # tool's result. Merge it in so the committer can record who
+                    # authorised the spend — the field that makes an approval
+                    # trail worth keeping.
+                    payload = {
+                        **proposal.payload,
+                        "approved_by": proposal.resolved_by,
+                        "approval_note": proposal.resolution_note,
+                    }
                     try:
                         outcome = (
-                            committer(context, proposal.payload)
+                            committer(context, payload)
                             if committer
-                            else _default_commit(context, proposal.payload)
+                            else _default_commit(context, payload)
                         )
                         results[proposal.tool_name] = outcome
                         committed.append(proposal.tool_name)
