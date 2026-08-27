@@ -10,7 +10,7 @@ from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, computed_field
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Provider = Literal["fake", "live"]
@@ -42,10 +42,26 @@ class Settings(BaseSettings):
     # --- LLM ----------------------------------------------------------------
     # "fake" runs the whole platform deterministically with no API key and no
     # network, which is what the test suite and `simulate-day` use.
-    llm_provider: Literal["fake", "anthropic"] = "fake"
+    llm_provider: Literal["fake", "anthropic", "google"] = "fake"
+
+    # --- Anthropic ---
     anthropic_api_key: str = ""
     model_reasoning: str = "claude-opus-5"
     model_conversational: str = "claude-sonnet-5"
+
+    # --- Google ---
+    # Both tiers default to Flash because the Gemini free tier covers Flash and
+    # Flash-Lite only. Anyone with billing attached can point the reasoning tier
+    # at a Pro model; the free tier cannot.
+    google_api_key: str = ""
+    google_model_reasoning: str = "gemini-3.6-flash"
+    google_model_conversational: str = "gemini-3.6-flash"
+    # Gemini 3 dropped `thinking_budget` for a thinking *level*. Unset leaves
+    # the model on its own default, which is the sane starting point.
+    # `restaurant-ai models` lists what a key can actually see — model ids move,
+    # and the `-latest` aliases are not safe to pin to (one of them resolved to
+    # a deprecated model and 404'd).
+    google_reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
     # Thinking output is drawn from this same budget, so it has to cover the
     # reasoning as well as the answer.
     llm_max_tokens: int = 8192
@@ -54,13 +70,29 @@ class Settings(BaseSettings):
     # `temperature: 0.0` — the obvious default for an operations system that
     # wants repeatable answers — fails the call outright. Setting this is only
     # correct against a model old enough to accept it.
+    #
+    # Gemini 3 Flash is the same story: it uses fixed sampling and discards a
+    # temperature it is sent, warning once per call while it does so.
     llm_temperature: float | None = None
-    # Adaptive thinking on the reasoning tier: the model decides how much to
-    # think per request rather than being given a fixed budget. Set to
-    # "disabled" to turn it off, or "off" to send nothing at all (which is what
-    # a pre-4.6 model needs).
+    # Anthropic only — Gemini spells this differently, see
+    # GOOGLE_REASONING_EFFORT above. Adaptive means the model decides how much
+    # to think per request rather than being handed a fixed budget. "disabled"
+    # turns it off; "off" sends no thinking field at all, which is what a
+    # pre-4.6 model needs.
     llm_thinking: Literal["adaptive", "disabled", "off"] = "adaptive"
     agent_max_tool_iterations: int = 6
+
+    @field_validator("llm_temperature", "google_reasoning_effort", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        """``FOO=`` in a .env means "not set", not "the empty string".
+
+        Without this, copying `.env.example` to `.env` — the documented way to
+        start — fails validation and takes the whole platform down before it
+        does anything, which reads as a broken codebase rather than a blank
+        line in a config file.
+        """
+        return None if value == "" else value
 
     # --- Integration providers ---------------------------------------------
     pos_provider: Provider = "fake"

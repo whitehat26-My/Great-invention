@@ -3,7 +3,10 @@
 The whole platform runs on the deterministic path by default, which means the
 LLM wiring could rot without any test noticing until someone sets a real key.
 These exercise everything up to the network boundary: provider selection, model
-construction, tool binding and the JSON schemas the model is shown.
+construction, tool binding and the JSON schemas the model is shown — for both
+live providers, because the two disagree about enough (sampling parameters,
+thinking, how a nullable argument is spelled) that "it works on Claude" says
+nothing about Gemini.
 
 Making an actual inference call needs a key and is the one verification step
 that cannot run here.
@@ -23,6 +26,17 @@ from restaurant_ai.kernel.registry import all_agents, get_agent
 def anthropic_env(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-not-a-real-key")
+    reset_settings_cache()
+    llm.reset_model_cache()
+    yield
+    reset_settings_cache()
+    llm.reset_model_cache()
+
+
+@pytest.fixture
+def google_env(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "google")
+    monkeypatch.setenv("GOOGLE_API_KEY", "not-a-real-key")
     reset_settings_cache()
     llm.reset_model_cache()
     yield
@@ -104,6 +118,85 @@ class TestToolBinding:
         assert not undescribed, f"{name}: {', '.join(undescribed)}"
 
 
+class TestGoogleProvider:
+    """The second live provider. Everything above `llm.py` is provider-agnostic;
+    what differs is confined here, and it differs in ways that are 400s rather
+    than warnings."""
+
+    def test_it_builds_the_configured_gemini_models(self, google_env):
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        settings = get_settings()
+        model = llm.get_model("reasoning")
+        assert isinstance(model, ChatGoogleGenerativeAI)
+        assert model.model.endswith(settings.google_model_reasoning)
+
+    def test_a_missing_key_fails_loudly(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "google")
+        monkeypatch.setenv("GOOGLE_API_KEY", "")
+        reset_settings_cache()
+        llm.reset_model_cache()
+        with pytest.raises(RuntimeError, match="GOOGLE_API_KEY"):
+            llm.get_model("reasoning")
+        reset_settings_cache()
+
+    def test_no_temperature_is_sent(self, google_env):
+        """Gemini 3 Flash uses fixed sampling and discards one, warning per call.
+
+        Same place Anthropic landed, for the same reason — and a warning on
+        every call from all thirteen agents is its own kind of broken.
+        """
+        assert llm.get_model("reasoning").temperature is None
+
+    def test_the_cache_does_not_confuse_providers(self, monkeypatch):
+        # Keyed on the id alone, two providers configured with the same model
+        # name hand back each other's client.
+        monkeypatch.setenv("LLM_PROVIDER", "google")
+        monkeypatch.setenv("GOOGLE_API_KEY", "k")
+        monkeypatch.setenv("GOOGLE_MODEL_REASONING", "shared-name")
+        monkeypatch.setenv("MODEL_REASONING", "shared-name")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        reset_settings_cache()
+        llm.reset_model_cache()
+        google = llm.get_model("reasoning")
+
+        monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+        reset_settings_cache()
+        anthropic = llm.get_model("reasoning")
+        assert type(google) is not type(anthropic)
+
+    @pytest.mark.parametrize("name", sorted(all_agents()))
+    def test_every_agents_tools_convert_for_gemini(self, google_env, name):
+        """Gemini function declarations are an OpenAPI 3.0 subset.
+
+        Nine arguments across five agents are `str | None`, which serialises as
+        `anyOf: [string, null]` — historically the rough edge in this converter.
+        """
+        from langchain_google_genai._function_utils import (
+            convert_to_genai_function_declarations,
+        )
+
+        spec = get_agent(name)
+        tools = [_as_langchain_tool(t) for t in spec.tools]
+        declared = convert_to_genai_function_declarations(tools)
+        names = {f.name for tool in declared for f in (tool.function_declarations or [])}
+        assert names == {t.name for t in spec.tools}
+
+    def test_a_nullable_argument_survives_conversion(self, google_env):
+        from langchain_google_genai._function_utils import (
+            convert_to_genai_function_declarations,
+        )
+
+        tool = _as_langchain_tool(get_agent("ordering").tool("place_order"))
+        declared = convert_to_genai_function_declarations([tool])
+        properties = declared[0].function_declarations[0].parameters.properties
+        # `notes` is where an allergy goes. It is optional, and it must keep
+        # both its nullability and the description that says what belongs in it.
+        assert properties["notes"].nullable is True
+        assert "allerg" in (properties["notes"].description or "")
+        assert properties["items"].nullable is not True
+
+
 class TestPromptAssembly:
     def test_the_context_prompt_carries_what_perceive_found(self):
         from datetime import date
@@ -123,3 +216,36 @@ class TestPromptAssembly:
         for spec in all_agents().values():
             assert len(spec.system_prompt) > 200, f"{spec.name} has a thin prompt"
             assert "\n" in spec.system_prompt
+
+
+class TestTheExampleEnvFile:
+    """`.env.example` is the documented way to start. It has to actually work."""
+
+    def test_it_parses(self):
+        from pathlib import Path
+
+        from restaurant_ai.config import Settings
+
+        example = Path(__file__).resolve().parents[1] / ".env.example"
+        assert example.exists()
+        # An empty `FOO=` means "not set". Left unhandled it is a validation
+        # error that takes the platform down before it does anything.
+        settings = Settings(_env_file=str(example))  # type: ignore[call-arg]
+        assert settings.llm_provider == "fake"
+        assert settings.google_reasoning_effort is None
+        assert settings.llm_temperature is None
+
+    def test_every_setting_it_names_exists(self):
+        """A stale key in the example is a setting someone will set in vain."""
+        from pathlib import Path
+
+        from restaurant_ai.config import Settings
+
+        example = Path(__file__).resolve().parents[1] / ".env.example"
+        known = set(Settings.model_fields)
+        unknown = [
+            line.split("=", 1)[0].strip().lower()
+            for line in example.read_text().splitlines()
+            if "=" in line and not line.lstrip().startswith("#")
+        ]
+        assert [k for k in unknown if k not in known] == []

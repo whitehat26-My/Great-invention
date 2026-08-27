@@ -111,6 +111,32 @@ def list_agents() -> None:
         typer.echo("")
 
 
+@app.command("models")
+def list_models() -> None:
+    """List the models the configured key can actually see.
+
+    Model ids move — Gemini Flash went 3.0 to 3.7 inside a year — and the
+    `-latest` aliases are not safe to pin to. This is the answer to a 404.
+    """
+    from restaurant_ai.kernel import llm
+
+    try:
+        names = llm.available_models()
+    except Exception as exc:
+        typer.echo(f"  {type(exc).__name__}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    configured = {llm.model_name("reasoning"), llm.model_name("conversational")}
+    typer.echo(f"\n  {len(names)} model(s) available to this key\n")
+    for name in names:
+        typer.echo(f"    {'*' if name in configured else ' '} {name}")
+    missing = configured - set(names)
+    if missing:
+        typer.echo(f"\n  configured but NOT available: {', '.join(sorted(missing))}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo("\n  (* = configured for a tier)")
+
+
 @app.command("live-check")
 def live_check(
     prompt: str = typer.Option(
@@ -134,7 +160,10 @@ def live_check(
     typer.echo(f"  max tokens {described['max_tokens']}\n")
 
     if described["provider"] == "fake":
-        typer.echo("  LLM_PROVIDER=fake — nothing to check. Set it to 'anthropic'.", err=True)
+        typer.echo(
+            "  LLM_PROVIDER=fake — nothing to check. Set it to 'anthropic' or 'google'.",
+            err=True,
+        )
         raise typer.Exit(code=1)
 
     failures = 0
@@ -145,7 +174,12 @@ def live_check(
             response = llm.get_model(tier).invoke([HumanMessage(content=prompt)])
         except Exception as exc:
             failures += 1
-            typer.echo(f"    FAILED  {type(exc).__name__}: {exc}\n", err=True)
+            typer.echo(f"    FAILED  {type(exc).__name__}: {exc}", err=True)
+            if "404" in str(exc) or "not found" in str(exc).lower():
+                # The likeliest first failure by a distance: model ids move, and
+                # a bare 404 says nothing about what you should have used.
+                typer.echo("    try:    restaurant-ai models", err=True)
+            typer.echo("", err=True)
             continue
 
         from restaurant_ai.kernel.graph import _message_text
