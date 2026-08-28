@@ -110,8 +110,10 @@ class TestDecisions:
         described = listener.handle_update(press(request_id))
         assert described and "unresolved" in described
 
-    def test_a_non_approval_update_is_ignored(self, db, telegram):
+    def test_an_update_with_no_chat_to_answer_is_ignored(self, db, telegram):
+        """Nowhere to send a reply is not the same as an unauthorised asker."""
         assert listener.handle_update({"update_id": 5, "message": {"text": "hello"}}) is None
+        assert not [p for m, p in telegram if m == "sendMessage"]
 
 
 class TestWhoMayDecide:
@@ -288,3 +290,117 @@ class TestTheChatIdIsCheckedBeforeItIsTrusted:
             tg, "api", lambda method, **kw: {"ok": True, "result": {"id": 5, "type": "private"}}
         )
         assert tg.describe_chat("5")["name"] == "unnamed"
+
+
+def say(text: str, *, chat: str = CHAT, user: int = 42) -> dict:
+    """A typed message in the approvals chat."""
+    return {
+        "update_id": 2,
+        "message": {
+            "message_id": 11,
+            "text": text,
+            "from": {"id": user, "username": "sharif"},
+            "chat": {"id": int(chat)},
+        },
+    }
+
+
+class TestTheOwnerCanAsk:
+    """The other half of the conversation: a message is a question."""
+
+    def test_a_question_is_answered_into_the_same_chat(self, db, telegram, monkeypatch):
+        monkeypatch.setattr(
+            "restaurant_ai.assistant.answer", lambda q, session=None: f"answering: {q}"
+        )
+        described = listener.handle_update(say("how much chicken do we have?"))
+
+        assert described.startswith("answered:")
+        sent = [payload for method, payload in telegram if method == "sendMessage"]
+        assert len(sent) == 1
+        assert sent[0]["chat_id"] == int(CHAT)
+        assert sent[0]["text"] == "answering: how much chicken do we have?"
+
+    def test_help_explains_what_can_be_asked(self, db, telegram):
+        listener.handle_update(say("/help"))
+        text = [p for m, p in telegram if m == "sendMessage"][0]["text"]
+        assert "question desk" in text
+        assert "/brief" in text and "/pending" in text
+        # It must never leave the owner thinking it can act.
+        assert "only read" in text
+
+    def test_start_is_help_too(self, db, telegram):
+        """The first thing anyone types to a new bot is /start."""
+        listener.handle_update(say("/start"))
+        assert [p for m, p in telegram if m == "sendMessage"][0]["text"].startswith("I am the")
+
+    def test_brief_sends_tonights_brief_on_demand(self, db, telegram):
+        listener.handle_update(say("/brief"))
+        text = [p for m, p in telegram if m == "sendMessage"][0]["text"]
+        assert "daily brief" in text
+        assert "MONEY" in text
+
+    def test_pending_lists_what_is_waiting_by_name(self, db, telegram, parked):
+        listener.handle_update(say("/pending"))
+        text = [p for m, p in telegram if m == "sendMessage"][0]["text"]
+        assert "waiting for your approval" in text
+        assert "Rain" in text
+
+    def test_a_quiet_queue_says_nothing_is_waiting(self, db, telegram):
+        from restaurant_ai.db.models import ApprovalRequest
+
+        for row in db.query(ApprovalRequest).all():
+            db.delete(row)
+        db.flush()
+
+        listener.handle_update(say("/pending"))
+        assert "Nothing is waiting" in [p for m, p in telegram if m == "sendMessage"][0]["text"]
+
+    def test_a_command_addressed_to_the_bot_by_name_still_works(self, db, telegram):
+        """In a group, Telegram sends "/brief@Keanu007_Bot"."""
+        listener.handle_update(say("/brief@Keanu007_Bot"))
+        assert "daily brief" in [p for m, p in telegram if m == "sendMessage"][0]["text"]
+
+    def test_a_sticker_is_not_a_question(self, db, telegram):
+        assert (
+            listener.handle_update({"update_id": 3, "message": {"chat": {"id": int(CHAT)}}}) is None
+        )
+        assert not [p for m, p in telegram if m == "sendMessage"]
+
+
+class TestWhoMayAsk:
+    """The numbers are the restaurant's. The allow-list guards them."""
+
+    def test_a_stranger_gets_no_answer(self, db, telegram, monkeypatch):
+        monkeypatch.setattr(
+            "restaurant_ai.assistant.answer", lambda q, session=None: "should never be called"
+        )
+        with pytest.raises(listener.UnauthorisedPresser):
+            listener.handle_update(say("what are today's takings?", chat="111", user=222))
+
+        # Silence, not a refusal: a reply would confirm the bot and the chat.
+        assert not [p for m, p in telegram if m == "sendMessage"]
+
+    def test_a_stranger_does_not_block_the_queue(self, db, telegram, monkeypatch):
+        monkeypatch.setattr(
+            listener,
+            "api",
+            lambda method, **kw: (
+                {"ok": True, "result": [say("hi", chat="111", user=222)]}
+                if method == "getUpdates"
+                else {"ok": True, "result": {}}
+            ),
+        )
+        offset, handled = listener.poll_once(None)
+        assert offset == 3
+        assert handled and handled[0].startswith("ignored:")
+
+    def test_the_listener_now_asks_telegram_for_messages_too(self, db, telegram, monkeypatch):
+        asked = {}
+
+        def fake_api(method, **payload):
+            asked.update(payload)
+            return {"ok": True, "result": []}
+
+        monkeypatch.setattr(listener, "api", fake_api)
+        listener.poll_once(None)
+        assert asked["allowed_updates"] == ["callback_query", "message"]

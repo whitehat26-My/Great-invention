@@ -479,6 +479,61 @@ shell. Chart colors are the validated dark-mode palette; animations respect
 
 ---
 
+## The system map
+
+`GET /dashboard/map?key=<APPROVAL_API_KEY>` (or the **system map** link in the
+dashboard header) draws the platform as a machine: the AI core at the centre,
+the six departments ringed around it, the eleven agents fanned out past their
+department, each with a live status dot.
+
+Press any node. A department lists its agents; an agent opens the full picture —
+what it does, when it runs, what its last run actually said, every tool it can
+call with the approval-gated ones marked, and the operating brief it reasons
+from, verbatim.
+
+It is drawn from the registry, not from a description of it: `/dashboard/map/data`
+reads the same `AgentSpec` objects and the same beat schedule the runtime
+executes, so the map cannot show an agent the system does not have or a tool an
+agent cannot call. Departments are told apart by position and label rather than
+six hues, because a six-colour wheel cannot clear the colourblind checks — the
+only colour carrying meaning is the status dot, and every dot has a text legend.
+
+---
+
+## Asking the restaurant a question
+
+The approvals chat used to run one way: the agents wrote, and the owner's whole
+vocabulary was two buttons. `restaurant-ai telegram-listen` now answers questions
+in the same chat.
+
+```
+you   how much chicken do we have?
+you   what are today's numbers?
+you   why did Rain order rice?
+you   /brief      tonight's brief, on demand
+you   /pending    what is waiting for you
+you   /help       what you can ask
+```
+
+Answers come from `assistant.build_snapshot` — every agent's own `perceive`
+view, the same ones the brief reports and the agents plan from, so the desk and
+the agent that acts cannot disagree about the state of the restaurant. One
+broken view is a line in the answer, not a failure to answer.
+
+**It is read-only by construction, not by instruction.** The model is given no
+tools at all — not a gated tool, not a tool it is told to avoid. A prompt that
+says "do not change anything" is a request; a model with nothing bound to it
+cannot write to this restaurant whatever it decides to do. Ask it to place an
+order and it says whose job that is and that the card needs approving. The same
+allow-list guards asking as guards pressing, and a message from an unknown chat
+gets silence rather than a refusal — a reply would confirm the bot exists and
+hand a stranger the restaurant's numbers.
+
+`restaurant-ai ask "..."` is the same desk from a terminal, which is how it is
+tested without Telegram.
+
+---
+
 ## The operating rhythm
 
 Celery beat, in the restaurant's own timezone (a `23:30` that fires at `07:30`
@@ -555,12 +610,15 @@ src/restaurant_ai/
   domain/          pure logic — forecasting, inventory, costing, pricing,
                    scheduling, pacing, reconciliation, tables
   kernel/          the shared agent graph, registry, approval gate, audit
-  agents/          the 13, in 6 department packages
+  agents/          the 11, in 6 department packages
   db/              SQLAlchemy models (53 tables) + the demo restaurant
   integrations/    ports + simulators
-  api/             FastAPI: signed webhooks, agent control, approvals
+  api/             FastAPI: signed webhooks, agent control, approvals,
+                   the dashboard and the system map
   worker/          Celery app, beat schedule, tasks
-  approvals/       the gate: service, Slack, Telegram
+  approvals/       the gate: service, Slack, Telegram, the long-poll listener
+  brief.py         the owner's nightly message
+  assistant.py     the question desk — read-only, no tools bound
   simulation.py    a full service day through the real path
 ```
 
