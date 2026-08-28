@@ -88,6 +88,22 @@ def process_inbound_event(self, event_id: str, event_type: str) -> dict[str, Any
     return {"event_id": event_id, "status": "processed", "result": result}
 
 
+@celery_app.task(name="restaurant_ai.worker.tasks.send_daily_brief")
+def send_daily_brief() -> dict[str, Any]:
+    """Close the day into the owner's pocket.
+
+    Runs after Camelia (23:45), so the money section carries her verdict rather
+    than "day not closed yet".
+    """
+    from restaurant_ai.brief import build_brief, render_brief, send_brief
+    from restaurant_ai.db.base import session_scope
+
+    with session_scope() as session:
+        text = render_brief(build_brief(session))
+    delivered = send_brief(text)
+    return {"delivered": delivered, "chars": len(text)}
+
+
 @celery_app.task(name="restaurant_ai.worker.tasks.drain_events")
 def drain_events(limit: int = 200) -> dict[str, Any]:
     """Deliver queued domain events from the transactional outbox."""

@@ -58,6 +58,35 @@ def reset_db(
     typer.echo("Schema dropped. Run `make migrate && make seed`.")
 
 
+@app.command("brief")
+def daily_brief(
+    business_date: str = typer.Option(None, help="ISO date; defaults to today."),
+    send: bool = typer.Option(False, help="Also deliver it to the Telegram approvals chat."),
+) -> None:
+    """The owner's daily brief: every department in one message.
+
+    The same brief Celery sends to Telegram at close, on demand. Each section
+    reports what its agents actually see, and a broken section degrades to one
+    line rather than costing you the other five.
+    """
+    from datetime import date as _date
+
+    from restaurant_ai.brief import build_brief, render_brief, send_brief
+    from restaurant_ai.db.base import session_scope
+
+    day = _date.fromisoformat(business_date) if business_date else None
+    with session_scope() as session:
+        text = render_brief(build_brief(session, day))
+
+    typer.echo("\n" + text)
+    if send:
+        if send_brief(text):
+            typer.echo("\n  sent to the Telegram approvals chat.")
+        else:
+            typer.echo("\n  NOT sent — Telegram is not configured.", err=True)
+            raise typer.Exit(code=1)
+
+
 @app.command("menu-template")
 def menu_template(
     out: str = typer.Argument("menu.xlsx", help="Where to write the workbook."),
