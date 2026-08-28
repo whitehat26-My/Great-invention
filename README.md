@@ -568,6 +568,27 @@ with the error. Silence is never the answer to anything, because silence reads
 exactly like success: if handling an update fails anywhere, the failure is sent
 into the chat rather than only into the log.
 
+### "No such command"
+
+Almost never a missing command — a checkout that was pulled and an install that
+was not, so the CLI keeps loading an older copy from `site-packages`.
+
+```
+restaurant-ai --version
+```
+
+```
+restaurant-ai 0.1.0
+running from  /home/you/Great-invention/src/restaurant_ai
+commit        30ce02f  Merge pull request #11: say why nothing happened
+```
+
+The path is the answer: if it points inside your checkout, `git pull` is enough.
+If it points into `site-packages`, the commit reads *unknown — this is an
+installed copy*, and a pull changes nothing until you `pip install -e .` again.
+The version string never moves between releases, so the commit is the part that
+tells you whether this is today's code.
+
 ### When nothing happens
 
 Silence from the bot is the one failure that tells you nothing: a working

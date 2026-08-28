@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal
+from pathlib import Path
 
 import typer
 
@@ -11,14 +12,72 @@ from restaurant_ai.logging_setup import configure_logging
 
 app = typer.Typer(
     name="restaurant-ai",
-    help="Autonomous restaurant operations: 13 agents across 6 departments.",
+    help="Autonomous restaurant operations: 11 agents across 6 departments.",
     no_args_is_help=True,
     add_completion=False,
 )
 
 
+def _describe_install() -> str:
+    """What is actually running, and from where.
+
+    A command that "does not exist" is almost never missing — it is a checkout
+    that was pulled and an install that was not, so the CLI keeps loading an
+    older copy from site-packages. The path answers that in one line, and the
+    commit answers "is this today's code?", which the version string never can
+    because it does not move between releases.
+    """
+    import subprocess
+
+    from restaurant_ai import __version__
+
+    module = Path(__file__).resolve()
+    lines = [f"restaurant-ai {__version__}", f"running from  {module.parent}"]
+
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=module.parent,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        subject = subprocess.run(
+            ["git", "log", "-1", "--format=%s"],
+            cwd=module.parent,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if commit.returncode == 0:
+            lines.append(f"commit        {commit.stdout.strip()}  {subject.stdout.strip()}")
+        else:
+            lines.append(
+                "commit        unknown — this is an installed copy, not a checkout. "
+                "`git pull` will not change it; reinstall with `pip install -e .`"
+            )
+    except Exception as exc:  # pragma: no cover - git missing or unusable
+        lines.append(f"commit        could not read ({type(exc).__name__})")
+
+    return "\n".join(lines)
+
+
+def _version(value: bool) -> None:
+    if value:
+        typer.echo(_describe_install())
+        raise typer.Exit()
+
+
 @app.callback()
-def _root() -> None:
+def _root(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version,
+        is_eager=True,
+        help="What is running, and from where.",
+    ),
+) -> None:
     configure_logging()
 
 
