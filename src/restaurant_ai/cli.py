@@ -673,3 +673,17 @@ def ask(
     from restaurant_ai.assistant import answer
 
     typer.echo(answer(question))
+
+
+@app.command("doctor")
+def doctor() -> None:
+    """Why nothing happened — check every link in the chain, change nothing.
+
+    Silence from the bot looks the same whether it is working and had nothing
+    to say, or dead. This says which.
+    """
+    from restaurant_ai.doctor import diagnose, render
+
+    report = diagnose()
+    typer.echo(render(report))
+    raise typer.Exit(0 if report.healthy else 1)
