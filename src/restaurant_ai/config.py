@@ -131,6 +131,16 @@ class Settings(BaseSettings):
     slack_approval_channel: str = "#restaurant-approvals"
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    # Echoed back by Telegram in X-Telegram-Bot-Api-Secret-Token on every
+    # webhook call. Without it the callback endpoint is a door anyone can walk
+    # through: a forged {"callback_query": {"data": "ok:<id>"}} approves a
+    # purchase order, and GET /approvals hands out the ids.
+    telegram_webhook_secret: str = ""
+    # Guards the approval and agent-run REST endpoints. Unset means those
+    # endpoints refuse to serve rather than serve openly — the approval gate is
+    # the whole safety story, and shipping it unauthenticated by omission is how
+    # it silently stops being one.
+    approval_api_key: str = ""
 
     # --- Operating policy ---------------------------------------------------
     service_level_z: float = Field(

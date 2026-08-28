@@ -39,17 +39,17 @@ class TestRunAgentPath:
         assert "--path must be" in result.output
 
     def test_the_deterministic_path_is_reported_as_such(self, db):
-        result = runner.invoke(app, ["run-agent", "ordering", "--path", "deterministic"])
+        result = runner.invoke(app, ["run-agent", "reputation", "--path", "deterministic"])
         assert result.exit_code == 0
         assert "path   deterministic" in result.output
 
     def test_forcing_the_model_without_one_fails_loudly(self, db):
         # A forced live run under LLM_PROVIDER=fake must not quietly fall back
         # to the deterministic path and report success.
-        result = runner.invoke(app, ["run-agent", "ordering", "--path", "model"])
+        result = runner.invoke(app, ["run-agent", "reputation", "--path", "model"])
         assert result.exit_code == 1
         assert "status failed" in result.output
 
     def test_a_malformed_payload_does_not_reach_the_agent(self, db):
-        result = runner.invoke(app, ["run-agent", "ordering", "--payload", "{not json"])
+        result = runner.invoke(app, ["run-agent", "reputation", "--payload", "{not json"])
         assert result.exit_code != 0

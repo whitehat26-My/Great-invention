@@ -187,14 +187,14 @@ class TestGoogleProvider:
             convert_to_genai_function_declarations,
         )
 
-        tool = _as_langchain_tool(get_agent("ordering").tool("place_order"))
+        tool = _as_langchain_tool(get_agent("bookkeeping").tool("reconcile_day"))
         declared = convert_to_genai_function_declarations([tool])
         properties = declared[0].function_declarations[0].parameters.properties
-        # `notes` is where an allergy goes. It is optional, and it must keep
-        # both its nullability and the description that says what belongs in it.
-        assert properties["notes"].nullable is True
-        assert "allerg" in (properties["notes"].description or "")
-        assert properties["items"].nullable is not True
+        # An optional argument has to keep both its nullability and the
+        # description that says what belongs in it — losing either leaves the
+        # model guessing at a field it was meant to be told about.
+        assert properties["business_date"].nullable is True
+        assert properties["business_date"].description
 
 
 class TestPromptAssembly:

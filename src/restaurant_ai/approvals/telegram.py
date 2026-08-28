@@ -3,6 +3,19 @@
 An inline keyboard with Approve and Reject. The approval id rides in the
 callback data, which Telegram caps at 64 bytes — a UUID plus a short prefix
 fits, which is why the callback carries the id rather than a serialised payload.
+
+Decisions come back one of two ways, and the difference decides whether you need
+to host anything:
+
+- **Webhook.** Telegram POSTs to `/approvals/telegram/callback`. Needs a public
+  HTTPS URL, and needs `TELEGRAM_WEBHOOK_SECRET` set — that header is the only
+  thing separating Telegram from anyone else who finds the URL.
+- **Long polling.** The process asks Telegram for updates. No public URL, no
+  TLS certificate, no DNS: it works from a laptop behind a router. This is what
+  `restaurant-ai telegram-listen` runs.
+
+Telegram permits one or the other, never both at once — registering a webhook
+makes getUpdates return an error until it is deleted.
 """
 
 from __future__ import annotations
@@ -117,3 +130,114 @@ def parse_callback(body: dict[str, Any]) -> Interaction | None:
         user=name,
         note=f"Resolved from Telegram by {name}",
     )
+
+
+class TelegramUnreachable(RuntimeError):
+    """The request never got to Telegram — proxy, firewall, DNS or TLS."""
+
+
+class TelegramRejected(RuntimeError):
+    """Telegram answered, and said no."""
+
+
+def api(method: str, **payload: Any) -> dict[str, Any]:
+    """Call one Telegram Bot API method.
+
+    The two failure modes are worth telling apart. "403 Forbidden" from an
+    egress proxy that never let the connection out looks identical to a bad
+    token unless something says otherwise, and the fixes are nothing alike:
+    one is a network policy, the other is a new token from BotFather.
+    """
+    settings = get_settings()
+    if not settings.telegram_bot_token:
+        raise TelegramUnreachable("TELEGRAM_BOT_TOKEN is not set.")
+
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/{method}"
+    try:
+        response = httpx.post(url, json=payload, timeout=payload.get("timeout", 10) + 10)
+    except httpx.ProxyError as exc:
+        raise TelegramUnreachable(
+            f"Could not reach api.telegram.org — the proxy refused the connection ({exc}). "
+            "This is a network policy, not a bad token."
+        ) from exc
+    except httpx.TransportError as exc:
+        raise TelegramUnreachable(
+            f"Could not reach api.telegram.org ({type(exc).__name__}: {exc})."
+        ) from exc
+
+    try:
+        body: dict[str, Any] = response.json()
+    except ValueError as exc:
+        # An HTML error page means something in the middle answered, not Telegram.
+        raise TelegramUnreachable(
+            f"api.telegram.org returned HTTP {response.status_code} and not JSON — "
+            "something between here and Telegram answered instead of Telegram."
+        ) from exc
+
+    if not body.get("ok"):
+        raise TelegramRejected(f"Telegram refused {method}: {body.get('description')}")
+    return body
+
+
+def describe_bot() -> dict[str, Any]:
+    """Who this token belongs to, and whether a webhook is already registered.
+
+    The webhook matters: with one registered, getUpdates refuses, so a listener
+    that looks hung is usually a webhook nobody remembered setting.
+    """
+    me = api("getMe")["result"]
+    hook = api("getWebhookInfo")["result"]
+    return {
+        "username": me.get("username"),
+        "name": me.get("first_name"),
+        "webhook_url": hook.get("url") or "",
+        "pending_updates": hook.get("pending_update_count", 0),
+        "has_secret": bool(
+            hook.get("has_custom_certificate") or get_settings().telegram_webhook_secret
+        ),
+    }
+
+
+def describe_chat(chat_id: str) -> dict[str, Any]:
+    """Resolve a chat id to whoever is actually on the other end.
+
+    A chat id is a bare number with nothing self-validating about it, so a typo
+    or a copied placeholder looks exactly like a real one until a send fails.
+    Checking it first turns "chat not found" at the moment of use into a name
+    you can recognise at the moment of configuring.
+    """
+    chat = api("getChat", chat_id=chat_id)["result"]
+    name = (
+        chat.get("title")
+        or " ".join(filter(None, [chat.get("first_name"), chat.get("last_name")]))
+        or chat.get("username")
+        or "unnamed"
+    )
+    return {"id": chat.get("id"), "type": chat.get("type"), "name": name}
+
+
+def answer_callback(callback_query_id: str, text: str) -> None:
+    """Stop the button spinning, and say what happened.
+
+    Telegram shows a loading state on an inline button until this is called;
+    leaving it out makes a decision that worked look like one that hung.
+    """
+    try:
+        api("answerCallbackQuery", callback_query_id=callback_query_id, text=text[:200])
+    except Exception as exc:  # a cosmetic call must never lose a real decision
+        log.warning("could not answer callback", error=str(exc))
+
+
+def settle_message(chat_id: Any, message_id: Any, verdict: str, who: str) -> None:
+    """Replace the keyboard with the outcome, so the card cannot be pressed twice."""
+    try:
+        api(
+            "editMessageReplyMarkup",
+            chat_id=chat_id,
+            message_id=message_id,
+            reply_markup={
+                "inline_keyboard": [[{"text": f"{verdict} by {who}", "callback_data": "done"}]]
+            },
+        )
+    except Exception as exc:
+        log.warning("could not settle card", error=str(exc))

@@ -33,14 +33,20 @@ five stop.
 
 ---
 
-## The thirteen agents
+## The eleven agents
 
 ### Front of House
 | Name | Agent | What it does |
 |---|---|---|
-| **Freddy** | Reservation & Table Management | Takes bookings from WhatsApp, web and phone; seats parties on the tightest-fitting table; flags tables running past their turn |
-| **Melissa** | Conversational Order | Phone, drive-thru and kiosk orders; interprets dietary requests against the actual recipe; routes to the POS |
 | **Aziera** | Feedback & Reputation | Sweeps Google/social hourly, classifies, drafts replies, escalates the serious ones — **approval-gated** |
+
+> Reservations (Freddy) and conversational ordering (Melissa) were retired. Both
+> conversed with guests live under their own names, and the order agent gave
+> allergen advice — a wrong answer there is a different kind of wrong from a
+> wrong purchase order. This is a management platform: nothing in it writes to a
+> guest unprompted. Aziera stays because she is already that shape, drafting
+> replies a human sends. Both live in git history if a booking or ordering
+> channel is ever wanted back.
 
 ### Kitchen & KDS
 | Name | Agent | What it does |
@@ -76,7 +82,7 @@ five stop.
 
 ## How an agent works
 
-All thirteen are the same compiled LangGraph graph. Only the `AgentSpec` differs
+All eleven are the same compiled LangGraph graph. Only the `AgentSpec` differs
 — prompt, tools, model tier, approval policy.
 
 ```
@@ -222,7 +228,7 @@ make check       # everything CI runs: lint, format, typecheck, tests
 Useful commands:
 
 ```bash
-restaurant-ai agents                     # the 13, by department
+restaurant-ai agents                     # the 11, by department
 restaurant-ai run-agent stock_reorder    # run one now
 restaurant-ai approvals                  # what is waiting for a human
 restaurant-ai approvals --resolve <id>   # approve it
@@ -248,12 +254,12 @@ default to Flash; a Pro model needs billing attached.
 
 Budget for the rate limit rather than the token cost. The quota that bites is
 `GenerateRequestsPerMinutePerProjectPerModel`, and measured against a real key
-it is **5 requests a minute**, not the 15 the docs suggest. A 13-agent pass is
-40–50 requests, so it takes about twenty minutes of mostly waiting. Two things
+it is **5 requests a minute**, not the 15 the docs suggest. An 11-agent pass is
+35–45 requests, so it takes about twenty minutes of mostly waiting. Two things
 make that bearable, and both are defaults:
 
 - The two tiers use **different Flash ids**. The quota is counted per model, so
-  sharing one makes the thirteen agents queue behind each other for nothing.
+  sharing one makes the eleven agents queue behind each other for nothing.
 - `LLM_MAX_RETRIES=10`. A rate-limited provider is a queue, not an error — but
   the client defaults (6 for Gemini, 2 for Claude) back off for about half the
   wait a free tier asks for and then give up, which fails the run and loses the
@@ -325,6 +331,72 @@ restaurant-ai run-agent ordering --path deterministic
 what the deterministic path would have done for the same restaurant on the same
 day. Each run reports its turns and token counts, and `agent_run.model` records
 which model answered — so what a day actually cost is a query, not an estimate.
+
+---
+
+## Connecting Telegram
+
+Approvals are the first thing worth connecting, because they are how you stay in
+control of five agents that can spend money or publish. And Telegram is the one
+integration that needs **no hosting at all**.
+
+1. Message [@BotFather](https://t.me/BotFather), `/newbot`, and copy the token.
+2. Message your new bot once, so a chat exists to send to.
+3. Set `TELEGRAM_BOT_TOKEN`, `APPROVAL_CHANNEL=telegram`, and
+   `APPROVAL_API_KEY` (any long random string — `python -c "import secrets;
+   print(secrets.token_urlsafe(32))"`).
+4. `restaurant-ai telegram-check` — confirms the token, names the bot, resolves
+   `TELEGRAM_CHAT_ID` to whoever is on the other end, and sends a test card.
+
+   Find the chat id by messaging the bot and reading `"chat":{"id": ...}` from
+   `https://api.telegram.org/bot<token>/getUpdates`. It is around ten digits.
+   The check resolves it to a name before sending, so a typo or a copied
+   placeholder is caught while you are configuring rather than at the moment
+   the first real approval fails to arrive.
+5. `restaurant-ai telegram-listen` — takes decisions. Leave it running.
+
+That is the whole setup. No public URL, no TLS certificate, no DNS: the listener
+asks Telegram for updates rather than waiting to be called, so it works from a
+laptop behind a router.
+
+The webhook path is the right answer once the service has a public address —
+point Telegram at `/approvals/telegram/callback` and set
+`TELEGRAM_WEBHOOK_SECRET`. Telegram permits a webhook **or** polling, never
+both; `telegram-listen` refuses rather than hanging if it finds one registered.
+
+### Who is allowed to press the button
+
+`TELEGRAM_CHAT_ID` is an allow-list, not just an address. A bot token is a
+bearer credential and any chat the bot is in can press its buttons, so a press
+from anywhere else is refused and logged. With no chat configured, nobody is
+permitted — including you.
+
+---
+
+## The approval endpoints are closed by default
+
+These all fail closed: **a missing secret means the endpoint refuses to serve,
+not that it serves anyone.**
+
+| Endpoint | Guard |
+|---|---|
+| `GET /approvals` | `APPROVAL_API_KEY` via `X-API-Key` |
+| `POST /approvals/{id}/resolve` | `APPROVAL_API_KEY` |
+| `POST /agents/{name}/run` | `APPROVAL_API_KEY` |
+| `POST /approvals/telegram/callback` | `TELEGRAM_WEBHOOK_SECRET` |
+| `POST /approvals/slack/interactivity` | `SLACK_SIGNING_SECRET` |
+| `GET /health`, `/ready` | open — something has to be able to watch the service |
+
+This is not hypothetical tidying. Before it, `GET /approvals` listed every
+pending request with its id and the Telegram callback resolved any id it was
+handed, both unauthenticated. Demonstrated against the running app: eleven
+approvals listed and one approved as `not-the-owner`, with no credentials at
+all. The gate is the platform's entire safety story, and it was worth exactly as
+much as the endpoint recording the answer — which was nothing.
+
+Slack's verifier had the same shape in miniature: it returned early when no
+signing secret was set, on the reasoning that this was local development. In any
+deployment that missed the line, it meant anyone could approve anything.
 
 ---
 
