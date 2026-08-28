@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 from restaurant_ai.logging_setup import get_logger
 
@@ -40,16 +41,40 @@ class TunnelUnavailable(RuntimeError):
     """cloudflared is not installed, or never announced an address."""
 
 
+def find_cloudflared() -> str | None:
+    """Where cloudflared is, including a copy sitting in the project folder.
+
+    ``winget`` is not on every Windows install — older builds have never heard
+    of it — so the fallback is downloading the single .exe into the project
+    folder. Something downloaded there has to be findable there, and the full
+    path is passed to Popen rather than the bare name, because relying on
+    Windows searching the working directory is relying on a default that has
+    been tightened before.
+    """
+    found = shutil.which("cloudflared")
+    if found:
+        return found
+    for name in ("cloudflared.exe", "cloudflared"):
+        local = Path.cwd() / name
+        if local.exists():
+            return str(local)
+    return None
+
+
 def installed() -> bool:
-    return shutil.which("cloudflared") is not None
+    return find_cloudflared() is not None
 
 
 def install_hint() -> str:
     return (
-        "cloudflared is not installed.\n"
-        "  Windows:  winget install --id Cloudflare.cloudflared\n"
-        "  macOS:    brew install cloudflared\n"
-        "  Linux:    see developers.cloudflare.com/cloudflare-one/connections/"
+        "cloudflared is not installed.\n\n"
+        "  Windows, one line, no admin — downloads it into this folder:\n"
+        '    Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/'
+        'releases/latest/download/cloudflared-windows-amd64.exe" '
+        '-OutFile "cloudflared.exe"\n\n'
+        "  (or `winget install --id Cloudflare.cloudflared` where winget exists)\n"
+        "  macOS:  brew install cloudflared\n"
+        "  Linux:  see developers.cloudflare.com/cloudflare-one/connections/"
         "connect-networks/downloads/"
     )
 
@@ -64,10 +89,11 @@ def start(
     The process is returned rather than owned, so the supervisor can watch it
     and stop it with everything else.
     """
-    if not installed():
+    binary = find_cloudflared()
+    if binary is None:
         raise TunnelUnavailable(install_hint())
 
-    command = ["cloudflared", "tunnel", "--url", f"http://localhost:{port}"]
+    command = [binary, "tunnel", "--url", f"http://localhost:{port}"]
     launch = spawn or (
         lambda cmd: subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1

@@ -196,9 +196,16 @@ A Cloudflare quick tunnel dials out too, so there is still no inbound port, no
 domain and no certificate.
 
 ```powershell
-winget install --id Cloudflare.cloudflared     # once
+# once — winget is absent from older Windows installs, so the reliable form is
+# the single .exe, downloaded into the project folder, no admin needed
+Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
+
 restaurant-ai tunnel                            # leave it running
 ```
+
+`restaurant-ai tunnel` looks for `cloudflared` on the PATH *and* in the project
+folder, and runs it by full path — relying on Windows searching the working
+directory is relying on a default that has been tightened before.
 
 It prints the address and sends both links to the approvals chat, because a
 quick tunnel's name is random and changes each restart — an address the owner

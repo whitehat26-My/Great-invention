@@ -38,7 +38,7 @@ class FakeCloudflared:
 class TestFindingTheAddress:
     def test_the_url_is_read_out_of_cloudflareds_own_output(self, monkeypatch):
         """Not constructed or guessed — quick-tunnel names are random."""
-        monkeypatch.setattr(tunnel, "installed", lambda: True)
+        monkeypatch.setattr(tunnel, "find_cloudflared", lambda: "cloudflared")
         banner = [
             "INF Requesting new quick Tunnel on trycloudflare.com...\n",
             "INF +----------------------------------------+\n",
@@ -49,7 +49,7 @@ class TestFindingTheAddress:
         assert address == "https://brave-tiger-fresh-mint.trycloudflare.com"
 
     def test_the_local_port_is_the_one_asked_for(self, monkeypatch):
-        monkeypatch.setattr(tunnel, "installed", lambda: True)
+        monkeypatch.setattr(tunnel, "find_cloudflared", lambda: "cloudflared")
         seen = {}
 
         def spawn(cmd):
@@ -60,21 +60,62 @@ class TestFindingTheAddress:
         assert "http://localhost:9123" in seen["cmd"]
 
     def test_a_cloudflared_that_dies_says_so_rather_than_hanging(self, monkeypatch):
-        monkeypatch.setattr(tunnel, "installed", lambda: True)
+        monkeypatch.setattr(tunnel, "find_cloudflared", lambda: "cloudflared")
         with pytest.raises(tunnel.TunnelUnavailable, match="stopped before"):
             tunnel.start(spawn=lambda cmd: FakeCloudflared([], exit_code=1))
 
     def test_silence_is_given_up_on_rather_than_waited_out_forever(self, monkeypatch):
-        monkeypatch.setattr(tunnel, "installed", lambda: True)
+        monkeypatch.setattr(tunnel, "find_cloudflared", lambda: "cloudflared")
         chatty = FakeCloudflared(["INF connecting\n"] * 3)
         with pytest.raises(tunnel.TunnelUnavailable, match="did not announce"):
             tunnel.start(spawn=lambda cmd: chatty, timeout=0.2)
         assert chatty.terminated, "a tunnel we gave up on must not be left running"
 
     def test_a_missing_cloudflared_names_how_to_install_it(self, monkeypatch):
-        monkeypatch.setattr(tunnel, "installed", lambda: False)
-        with pytest.raises(tunnel.TunnelUnavailable, match="winget install"):
+        monkeypatch.setattr(tunnel, "find_cloudflared", lambda: None)
+        with pytest.raises(tunnel.TunnelUnavailable, match="Invoke-WebRequest"):
             tunnel.start()
+
+    def test_the_hint_does_not_assume_winget_exists(self, monkeypatch):
+        """Older Windows installs have never heard of winget."""
+        hint = tunnel.install_hint()
+        assert "Invoke-WebRequest" in hint
+        assert hint.index("Invoke-WebRequest") < hint.index("winget")
+
+
+class TestFindingCloudflared:
+    def test_the_one_on_the_path_is_used(self, monkeypatch):
+        monkeypatch.setattr(tunnel.shutil, "which", lambda name: "/usr/bin/cloudflared")
+        assert tunnel.find_cloudflared() == "/usr/bin/cloudflared"
+
+    def test_a_copy_downloaded_into_the_project_folder_is_found(self, monkeypatch, tmp_path):
+        """The winget-less fallback puts the .exe right here."""
+        monkeypatch.setattr(tunnel.shutil, "which", lambda name: None)
+        (tmp_path / "cloudflared.exe").write_bytes(b"")
+        monkeypatch.chdir(tmp_path)
+
+        assert tunnel.find_cloudflared() == str(tmp_path / "cloudflared.exe")
+
+    def test_the_full_path_is_what_gets_run(self, monkeypatch, tmp_path):
+        """Not the bare name: relying on Windows searching the working
+        directory is relying on a default that has been tightened before."""
+        monkeypatch.setattr(tunnel.shutil, "which", lambda name: None)
+        (tmp_path / "cloudflared.exe").write_bytes(b"")
+        monkeypatch.chdir(tmp_path)
+
+        seen = {}
+
+        def spawn(cmd):
+            seen["cmd"] = cmd
+            return FakeCloudflared(["https://a-b.trycloudflare.com\n"])
+
+        tunnel.start(spawn=spawn)
+        assert seen["cmd"][0] == str(tmp_path / "cloudflared.exe")
+
+    def test_nothing_anywhere_is_nothing(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(tunnel.shutil, "which", lambda name: None)
+        monkeypatch.chdir(tmp_path)
+        assert tunnel.find_cloudflared() is None
 
 
 class TestTheAnnouncement:
