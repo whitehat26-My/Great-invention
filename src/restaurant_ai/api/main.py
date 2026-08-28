@@ -7,7 +7,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from restaurant_ai import __version__
-from restaurant_ai.api.routes import agents_router, approvals_router, health_router
+from restaurant_ai.api.routes import (
+    agents_router,
+    approvals_router,
+    dashboard_router,
+    health_router,
+)
 from restaurant_ai.api.webhooks import router as webhooks_router
 from restaurant_ai.config import get_settings
 from restaurant_ai.logging_setup import configure_logging, get_logger
@@ -43,6 +48,7 @@ app.include_router(health_router)
 app.include_router(webhooks_router)
 app.include_router(agents_router)
 app.include_router(approvals_router)
+app.include_router(dashboard_router)
 
 
 @app.get("/", tags=["health"])
