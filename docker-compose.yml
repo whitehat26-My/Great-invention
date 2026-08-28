@@ -1,8 +1,20 @@
-# Normal workstation path. In sandboxes without a Docker daemon use
-# `scripts/dev_up.sh`, which brings up the same Postgres/Redis on the same ports.
+# The whole restaurant, on one machine.
+#
+# Five processes and two services. The split matters: `beat` decides when work
+# happens, `worker` does it, and `listener` is the only one a human talks to. A
+# deployment missing the listener runs the restaurant perfectly and never
+# answers the phone.
+#
+# Everything long-running restarts unless it was deliberately stopped. This is
+# unattended kitchen equipment: nobody is watching at 03:00, and a process that
+# dies and stays dead is indistinguishable from one that is working quietly.
+#
+# On a workstation without a Docker daemon use `scripts/dev_up.sh`, which brings
+# up the same Postgres/Redis on the same ports.
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-restaurant}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-restaurant}
@@ -17,6 +29,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports: ["${REDIS_PORT:-6380}:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -24,45 +37,69 @@ services:
       timeout: 3s
       retries: 20
 
-  api:
+  # Runs once per `up`, to completion, before anything that reads the database.
+  # A fresh host otherwise starts five processes against an empty schema and
+  # reports the resulting crashes as five unrelated faults.
+  migrate:
     build: .
-    command: uvicorn restaurant_ai.api.main:app --host 0.0.0.0 --port 8000
+    command: alembic upgrade head
+    restart: "no"
     env_file: [.env]
-    environment:
+    environment: &backend_env
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-    ports: ["8000:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  api:
+    build: .
+    command: uvicorn restaurant_ai.api.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+    env_file: [.env]
+    environment: *backend_env
+    ports: ["${API_PORT:-8000}:8000"]
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
 
   worker:
     build: .
     command: celery -A restaurant_ai.worker.celery_app:celery_app worker -l info
+    restart: unless-stopped
     env_file: [.env]
-    environment:
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
+    environment: *backend_env
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
 
   beat:
     build: .
     command: celery -A restaurant_ai.worker.celery_app:celery_app beat -l info
+    restart: unless-stopped
     env_file: [.env]
-    environment:
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
+    environment: *backend_env
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+
+  # The only process a person talks to: approvals, questions and instructions.
+  # Telegram allows one getUpdates at a time, so there must be exactly one of
+  # these — never scale it, or the two fight and each drops half the messages.
+  listener:
+    build: .
+    command: restaurant-ai telegram-listen
+    restart: unless-stopped
+    env_file: [.env]
+    environment: *backend_env
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
 
 volumes:
   pgdata:

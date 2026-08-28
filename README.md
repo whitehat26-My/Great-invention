@@ -221,7 +221,7 @@ Docker daemon.
 make api         # FastAPI webhook receiver on :8000
 make worker      # Celery worker
 make beat        # Celery beat — the operating rhythm below
-make test        # 558 tests
+make test        # 714 tests
 make check       # everything CI runs: lint, format, typecheck, tests
 ```
 
@@ -234,7 +234,25 @@ restaurant-ai approvals                  # what is waiting for a human
 restaurant-ai approvals --resolve <id>   # approve it
 restaurant-ai menu-cost MNU-NASILEMK     # plate cost, exploded
 restaurant-ai simulate-day --auto-approve
+restaurant-ai doctor                     # why nothing happened
+restaurant-ai --version                  # what is running, and from where
 ```
+
+### Deploying it
+
+Everything above runs while a terminal is open. **[DEPLOY.md](DEPLOY.md)** is how
+it keeps running when there is not: `docker compose up -d --build` brings up all
+five processes with `restart: unless-stopped` and migrations applied first.
+
+The fact that shapes the whole deployment: **nothing needs a public address.**
+The listener long-polls Telegram, dialling out and holding the connection open,
+so there is no port to forward, no domain to buy and no certificate to renew. A
+mini PC under the counter is a real answer rather than a compromise.
+
+The service people forget is `listener` — the restaurant runs perfectly without
+it and simply never answers the phone. There must be exactly one: Telegram
+allows a single `getUpdates` at a time, and two fight, each dropping half the
+messages.
 
 ---
 

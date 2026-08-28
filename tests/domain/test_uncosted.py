@@ -46,11 +46,25 @@ class TestTellingThemApart:
     def test_but_it_is_not_reported_as_costed(self, db, uncosted_dish):
         assert uncosted_dish.id not in costed_menu_items(db, [uncosted_dish.id])
 
-    def test_a_real_dish_is(self, db):
-        real = (
-            db.execute(select(MenuItem).where(MenuItem.sku != "MY-TEST-UNCOSTED")).scalars().first()
-        )
-        assert real.id in costed_menu_items(db, [real.id])
+    def test_a_dish_with_a_recipe_is(self, db):
+        """Found by its recipe, not by being any dish at all.
+
+        Which dishes are active depends on the menu this database was last
+        loaded with, and a restaurant that has imported its own menu without
+        recipes has none that cost out.
+        """
+        from restaurant_ai.db.models import Recipe
+
+        costed = [
+            r
+            for r in db.execute(select(Recipe).where(Recipe.menu_item_id.isnot(None)))
+            .scalars()
+            .all()
+            if r.components
+        ]
+        if not costed:
+            pytest.skip("this database has no costed dish to contrast against")
+        assert costed[0].menu_item_id in costed_menu_items(db, [costed[0].menu_item_id])
 
 
 class TestIrmaLeavesThemOut:
@@ -98,8 +112,13 @@ class TestIrmaLeavesThemOut:
                 state={},
             )
         )
+        # The examples are a capped sample, so the count is what is asserted;
+        # the dish itself is checked through the full list.
+        from restaurant_ai.agents.marketing.menu_pricing import _uncosted
+
         assert seen["items_not_costed"] >= 1
-        assert any("Tanpa Resipi" in name for name in seen["not_costed_examples"])
+        assert seen["items_not_costed"] == len(_uncosted(db))
+        assert any("Tanpa Resipi" in name for name in _uncosted(db))
 
 
 class TestCameliaSaysWhenCogsIsUnderstated:
