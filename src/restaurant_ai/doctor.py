@@ -60,6 +60,30 @@ def _check_database(report: Diagnosis) -> None:
         )
 
 
+def _check_trading_data(report: Diagnosis) -> None:
+    """Whose numbers are these? Not a fault — a fact worth stating."""
+    try:
+        from restaurant_ai import demo
+        from restaurant_ai.db.base import session_scope
+
+        with session_scope() as session:
+            invented = demo.synthetic_orders(session)
+            genuine = demo.real_orders(session)
+    except Exception:
+        return  # the database check above already reported this
+
+    if not invented:
+        report.add("trading data", True, f"{genuine} real order(s), no demo data")
+        return
+    report.add(
+        "trading data",
+        True,
+        f"{invented} demo order(s) from `seed`, {genuine} real",
+        "Every total includes the demo trading. `restaurant-ai reset-db --yes` then "
+        "`restaurant-ai up` gives you an empty restaurant to put real data into.",
+    )
+
+
 def _check_model(report: Diagnosis) -> None:
     from restaurant_ai.kernel import llm
 
@@ -212,6 +236,7 @@ def diagnose() -> Diagnosis:
     """Run every check. Never changes anything."""
     report = Diagnosis()
     _check_database(report)
+    _check_trading_data(report)
     _check_model(report)
     _check_telegram(report)
     return report
@@ -228,6 +253,14 @@ def render(report: Diagnosis) -> str:
         if len(detail) > 160:
             detail = detail[:160].rstrip() + "…"
         lines.append(f"  {'ok  ' if check.ok else 'FAIL'}  {check.name.ljust(width)}  {detail}")
+
+    # A passing check can still carry advice — "these numbers are demo data" is
+    # not a fault, and would be a lie as one, but the owner needs to read it.
+    guidance = [check for check in report.checks if check.ok and check.fix]
+    if guidance:
+        lines.append("")
+        for check in guidance:
+            lines.append(f"  {check.name}: {check.fix}")
 
     broken = [check for check in report.checks if not check.ok and check.fix]
     if broken:

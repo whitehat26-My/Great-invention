@@ -30,7 +30,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from restaurant_ai import clock
+from restaurant_ai import clock, demo
 from restaurant_ai.config import get_settings
 from restaurant_ai.db.models import (
     AgentRun,
@@ -105,7 +105,11 @@ def build_brief(session: Session, business_date: date | None = None) -> Brief:
             select(DailyReport).where(DailyReport.business_date == day)
         ).scalar_one_or_none()
         if report is None:
-            return ["day not closed yet — Camelia reports after 23:45"]
+            waiting = ["day not closed yet — Camelia reports after 23:45"]
+            caveat = demo.describe(session)
+            if caveat:
+                waiting.append(f"({caveat})")
+            return waiting
         lines = [
             f"revenue {report.net_revenue:,.2f} · {report.covers} covers "
             f"· avg check {report.average_check:,.2f}",
@@ -116,6 +120,10 @@ def build_brief(session: Session, business_date: date | None = None) -> Brief:
             # Camelia's first sentence is the verdict; the rest is detail.
             first = report.commentary.split(". ")[0].strip()
             lines.append(first + ("" if first.endswith(".") else "."))
+        # Said last, so it is the note the owner leaves the section with.
+        caveat = demo.describe(session)
+        if caveat:
+            lines.append(f"({caveat})")
         return lines
 
     _section(brief, "money", money)

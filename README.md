@@ -651,6 +651,37 @@ installed copy*, and a pull changes nothing until you `pip install -e .` again.
 The version string never moves between releases, so the commit is the part that
 tells you whether this is today's code.
 
+### Whose numbers are these?
+
+`restaurant-ai seed` invents a fortnight of trading — a couple of thousand
+orders with plausible covers, revenue and prime cost. That is right for proving
+the platform works and wrong to read as fact: Camelia closes the day on it and
+the brief arrives reporting the takings of a restaurant that does not exist.
+
+The risk is not the day you type `seed` and remember. It is the week the real
+restaurant opens, when real orders land beside the invented ones and every total
+quietly mixes the two. So both places the numbers surface say so:
+
+```
+MONEY — Emil & Camelia
+  day not closed yet — Camelia reports after 23:45
+  (all 2636 orders here are demo data from `seed`, not real trading)
+```
+
+```
+  ok    trading data    2636 demo order(s) from `seed`, 0 real
+
+  trading data: Every total includes the demo trading. `restaurant-ai reset-db
+  --yes` then `restaurant-ai up` gives you an empty restaurant to put real data
+  into.
+```
+
+Seeded orders are numbered `H<yymmdd>-<counter>`, which the seed has always done
+and nothing else does — countable, and unmistakable. Once the restaurant is real
+the line disappears entirely rather than becoming a banner everyone learns to
+skip, and `doctor` reports demo data as **ok**, because it is a state of the
+restaurant rather than something broken.
+
 ### When nothing happens
 
 Silence from the bot is the one failure that tells you nothing: a working
