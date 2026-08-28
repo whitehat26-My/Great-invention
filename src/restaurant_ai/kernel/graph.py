@@ -1,12 +1,17 @@
 """The shared agent graph.
 
-                    +<-------- (more to do) --------+
-                    |                               |
-    START -> perceive -> reason -> act -+- (nothing gated) --> record -> END
-                                        |
-                                        +- await_approval -> commit -> record -> END
+                         +<---- (more to do) ----+
+                         |                       |
+    START -> perceive -+-> reason -> act -+- (nothing gated) -+-> record -> END
+                       |                  |                   |
+                       |                  +- await_approval ->+
+                       |                        -> commit ----+
+                       |                                      |
+                       +---------- (nothing to do) -----------+
 
 perceive   loads the agent's read-only view of the world. No LLM, no writes.
+           An agent that says so can end the run here: nothing to do costs no
+           model call, which matters for one scheduled every five minutes.
 reason     decides what to do: the LLM bound to this agent's tools, or the
            agent's deterministic autonomous path when the fake model is active.
 act        runs the chosen tools. A gated tool returns a Proposal rather than
@@ -75,7 +80,23 @@ def build_graph(spec: AgentSpec):
                     state=dict(state.get("trigger_payload") or {}),
                 )
             )
-        return {"context": context or {}}
+        context = context or {}
+
+        # Nothing to do is a legitimate outcome, and the cheapest one. Deciding
+        # it here — from what perceive already read — means no model call, no
+        # tool call and no tokens for a run that was only ever going to report
+        # an empty kitchen.
+        if spec.idle_when is not None:
+            try:
+                idle = spec.idle_when(context)
+            except Exception:
+                # A broken predicate must fail toward doing the work. Skipping
+                # a run the restaurant needed is worse than paying for one it
+                # did not.
+                idle = None
+            if idle:
+                return {"context": {**context, "_idle": idle}, "summary": idle}
+        return {"context": context}
 
     def reason(state: AgentState) -> dict[str, Any]:
         """Choose the actions to take.
@@ -424,7 +445,11 @@ def build_graph(spec: AgentSpec):
     builder.add_node("record", record)
 
     builder.add_edge(START, "perceive")
-    builder.add_edge("perceive", "reason")
+    builder.add_conditional_edges(
+        "perceive",
+        lambda state: "record" if (state.get("context") or {}).get("_idle") else "reason",
+        {"reason": "reason", "record": "record"},
+    )
     builder.add_edge("reason", "act")
     builder.add_conditional_edges(
         "act",

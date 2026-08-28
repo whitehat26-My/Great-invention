@@ -96,6 +96,30 @@ def perceive(context: ToolContext) -> dict[str, Any]:
     }
 
 
+def nothing_to_pace(context: dict[str, Any]) -> str | None:
+    """Is the kitchen empty right now?
+
+    This agent is scheduled every five minutes through service, and that is the
+    right schedule: a ticket that lands at 19:03 has to reach the pass by 19:08,
+    not at the top of the hour. But the schedule is sized to the *worst* case,
+    and most of those wake-ups find no orders at all — a mamak between the lunch
+    and dinner rushes, a restaurant whose till is not connected yet, or simply
+    a quiet Tuesday.
+
+    Reasoning about an empty kitchen produces the same answer every time and
+    costs a model call to reach it: 156 a day, ahead of every other agent
+    combined, and on a free tier the whole day's quota spent before the owner
+    has asked a single question.
+
+    Open lines and tickets in flight together are the whole of the work — the
+    firing plan is computed from them and nothing else — so when both are zero
+    there is genuinely nothing this run could decide.
+    """
+    if context.get("open_order_lines") or context.get("tickets_in_flight"):
+        return None
+    return "No open orders and nothing in flight — the kitchen is clear."
+
+
 def fire_tickets(context: ToolContext, include_channels: str = "all") -> dict[str, Any]:
     """Route open order lines to stations and write the sequenced KDS tickets."""
     session = context.session
@@ -246,6 +270,7 @@ ORDER_PACING_AGENT = register(
             )
         ],
         perceive=perceive,
+        idle_when=nothing_to_pace,
         autonomous=autonomous,
     )
 )

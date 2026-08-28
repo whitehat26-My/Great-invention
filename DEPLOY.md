@@ -185,6 +185,65 @@ restaurant's brain off, however healthy every process was when the lid dimmed.
 This is the honest budget option, and its honest limits: the bot is only awake
 while that machine is on and on wifi. For always-on, the sections below.
 
+## Running it on Claude, and what it costs
+
+An Anthropic key is bought as **credits, not a subscription** — top up $5, spend
+$5, nothing recurs. (A Claude Pro/Max subscription is the chat app and does *not*
+include an API key; they are separate products with separate bills.) Prepaid
+credit is also the safety net: when it runs out the calls fail, they do not
+silently become an invoice.
+
+```
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+MODEL_REASONING=claude-sonnet-5
+MODEL_CONVERSATIONAL=claude-haiku-4-5
+```
+
+The defaults are Opus 5 and Sonnet 5, which are the right models for hard
+reasoning and the wrong ones for a first top-up. Sonnet for the agents that
+decide things and Haiku for chat costs roughly a fifth as much, and neither is
+straining on "did the flour run low".
+
+**Turn prompt caching on in the console.** Every run of an agent sends the same
+system prompt and the same tool schemas; cached, that part bills at a tenth.
+It is the single biggest lever here and it is off by default.
+
+### What actually spends the money
+
+Not the owner's questions — ten of those a day is noise. It is the schedule, and
+it is lopsided:
+
+| | runs/day | share |
+|---|---|---|
+| `order_pacing` (every 5 min, 11:00–23:59) | 156 | **83%** |
+| `reputation` (hourly) | 24 | 13% |
+| everything else, all nine agents | ~7 | 4% |
+
+The pacing agent is scheduled that often because a ticket landing at 19:03 has
+to reach the pass by 19:08 — not because there is a ticket every five minutes.
+It now checks whether the kitchen is empty *before* reasoning, and ends the run
+there when it is. On a restaurant whose till is not connected yet, that is all
+156 of them, for nothing.
+
+That check is also why the Gemini free tier kept failing to answer: 20 requests
+per day, spent before opening, so the owner's question at lunchtime met a
+45-second rate-limit wait and looked like a dead bot.
+
+### Rough monthly cost
+
+Estimated from the schedule above at ~5k input and ~400 output tokens per call —
+your mileage varies with menu size and how much the agents find to do. Watch
+"Spend this month" in the console for the real figure.
+
+| | without caching | with caching |
+|---|---|---|
+| Haiku for both tiers | ~$16 | ~$9 |
+| Sonnet reasoning + Haiku chat | ~$25 | ~$14 |
+
+Before the pacing check, the same schedule was ~$100/month — a $5 top-up lasted
+about a day. Both columns above assume it is in.
+
 ## Reaching the dashboard from anywhere
 
 Telegram works from anywhere because the listener dials out. The dashboard and

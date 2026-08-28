@@ -118,6 +118,21 @@ class AgentSpec:
     model_tier: ModelTier = "conversational"
     # Loads the agent's read-only view of the world. No LLM, no writes.
     perceive: Callable[[ToolContext], dict[str, Any]] | None = None
+    # Given what `perceive` found, is there anything to do at all? Returns the
+    # sentence to record when there is not, and None when there is.
+    #
+    # Some agents are scheduled far more often than they have work: the pacing
+    # agent runs every five minutes through service because when a ticket lands
+    # it has to be routed within five minutes, not because there is a ticket
+    # every five minutes. Waking a language model to be told the kitchen is
+    # empty costs a call and a token bill for every one of those, and on a free
+    # tier it spends the day's quota before the owner has asked a question.
+    #
+    # Only for work the database fully describes. An agent that goes *out* to
+    # find its work — the review sweep pulls new reviews from the platforms —
+    # must never be gated on what is already in the database, because empty is
+    # exactly the state it exists to change.
+    idle_when: Callable[[dict[str, Any]], str | None] | None = None
     # Optional deterministic path that runs instead of the LLM. Used by agents
     # whose work is purely computational, and by every agent under the fake
     # model so the platform is exercisable without an API key.
