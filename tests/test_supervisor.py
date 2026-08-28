@@ -205,3 +205,37 @@ class TestTheProcessList:
 
         for command in default_children().values():
             importlib.import_module(command[2])
+
+
+class TestNothingOutlivesTheSupervisor:
+    def test_children_are_stopped_even_when_the_loop_itself_crashes(self, monkeypatch):
+        """Children live in their own sessions, so nobody else would reap them.
+
+        The real case: `up | head` closed stdout, a log write raised
+        BrokenPipeError mid-loop, and seven processes outlived their
+        supervisor. However the loop ends, the children end with it.
+        """
+        import pytest
+
+        from restaurant_ai import supervisor as supervisor_module
+
+        spawned: list[FakeProcess] = []
+
+        def spawn(command):
+            process = FakeProcess()
+            spawned.append(process)
+            return process
+
+        monkeypatch.setattr(supervisor_module, "GroupProcess", spawn)
+        monkeypatch.setattr(
+            supervisor_module.Supervisor,
+            "check",
+            lambda self: (_ for _ in ()).throw(BrokenPipeError("stdout went away")),
+        )
+        monkeypatch.setattr(supervisor_module.time, "sleep", lambda s: None)
+
+        with pytest.raises(BrokenPipeError):
+            supervisor_module.run({"listener": ["cmd"], "beat": ["cmd"]}, poll_seconds=0)
+
+        assert spawned, "children were started"
+        assert all(p.terminated for p in spawned)
