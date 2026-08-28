@@ -188,3 +188,125 @@ class TestTheCli:
         result = CliRunner().invoke(app, ["ask", "how are we doing?"])
         assert result.exit_code == 0, result.output
         assert "money:" in result.output
+
+
+class TestRoutingAnInstruction:
+    """Routing decides whether words are a question or a job. Wrong is expensive."""
+
+    def _model(self, monkeypatch, verdict: str):
+        class Recorder:
+            def invoke(self, messages):
+                class Response:
+                    content = verdict
+
+                return Response()
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier: Recorder())
+
+    def test_a_question_routes_to_answering(self, db, monkeypatch):
+        self._model(monkeypatch, "QUESTION")
+        from restaurant_ai.assistant import route
+
+        assert route("how much chicken?").kind == "question"
+
+    def test_an_instruction_routes_to_the_agent(self, db, monkeypatch):
+        self._model(monkeypatch, "RUN stock_reorder")
+        from restaurant_ai.assistant import route
+
+        intent = route("restock the kitchen")
+        assert intent.kind == "run"
+        assert intent.agent == "stock_reorder"
+
+    def test_a_person_name_routes_too(self, db, monkeypatch):
+        """The model may answer with the name the owner uses."""
+        self._model(monkeypatch, "RUN Rain")
+        from restaurant_ai.assistant import route
+
+        assert route("get Rain on the stock").agent == "stock_reorder"
+
+    def test_a_misroute_to_nobody_becomes_a_question_to_the_owner(self, db, monkeypatch):
+        """Answering RUN and then naming a stranger must not run anything."""
+        self._model(monkeypatch, "RUN gordon_ramsay")
+        from restaurant_ai.assistant import route
+
+        intent = route("shout at the kitchen")
+        assert intent.kind == "unclear"
+        assert "gordon_ramsay" in intent.reason
+
+    def test_an_unparseable_verdict_is_unclear_not_a_guess(self, db, monkeypatch):
+        self._model(monkeypatch, "I think maybe you want to reorder something?")
+        from restaurant_ai.assistant import route
+
+        assert route("hmm").kind == "unclear"
+
+    def test_a_model_that_fails_routes_to_unclear(self, db, monkeypatch):
+        """Rate-limited or unreachable must not become a coin-flip."""
+
+        class Broken:
+            def invoke(self, messages):
+                raise RuntimeError("429 quota exceeded")
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier: Broken())
+        from restaurant_ai.assistant import route
+
+        intent = route("restock the kitchen")
+        assert intent.kind == "unclear"
+        assert "429" in intent.reason
+
+    def test_nothing_said_is_unclear(self, db):
+        from restaurant_ai.assistant import route
+
+        assert route("   ").kind == "unclear"
+
+    def test_the_router_is_told_every_agent_it_may_name(self, db, monkeypatch):
+        captured = {}
+
+        class Recorder:
+            def invoke(self, messages):
+                captured["system"] = messages[0].content
+
+                class Response:
+                    content = "QUESTION"
+
+                return Response()
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier: Recorder())
+        from restaurant_ai.assistant import route
+        from restaurant_ai.kernel.registry import all_agents
+
+        route("anything")
+        for name in all_agents():
+            assert name in captured["system"]
+        assert "Never guess between two" in captured["system"]
+
+
+class TestFindingAnAgentWithoutAModel:
+    """The path that still works when the model does not."""
+
+    def test_a_person_name_finds_the_agent(self):
+        from restaurant_ai.assistant import find_agent
+
+        assert find_agent("Rain") == "stock_reorder"
+        assert find_agent("  rain  ") == "stock_reorder"
+
+    def test_a_slug_finds_the_agent(self):
+        from restaurant_ai.assistant import find_agent
+
+        assert find_agent("stock_reorder") == "stock_reorder"
+        assert find_agent("stock-reorder") == "stock_reorder"
+
+    def test_a_stranger_finds_nobody(self):
+        from restaurant_ai.assistant import find_agent
+
+        assert find_agent("gordon") is None
+        assert find_agent("") is None
+
+    def test_without_a_model_naming_an_agent_still_runs_it(self, db):
+        """No classifier, but "rain" is unambiguous without one."""
+        from restaurant_ai.assistant import route
+
+        assert route("rain").kind == "run"
+        assert route("how are we doing?").kind == "question"

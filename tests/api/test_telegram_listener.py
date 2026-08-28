@@ -320,18 +320,18 @@ class TestTheOwnerCanAsk:
         assert sent[0]["chat_id"] == int(CHAT)
         assert sent[0]["text"] == "answering: how much chicken do we have?"
 
-    def test_help_explains_what_can_be_asked(self, db, telegram):
+    def test_help_explains_both_asking_and_telling(self, db, telegram):
         listener.handle_update(say("/help"))
         text = [p for m, p in telegram if m == "sendMessage"][0]["text"]
-        assert "question desk" in text
-        assert "/brief" in text and "/pending" in text
-        # It must never leave the owner thinking it can act.
-        assert "only read" in text
+        assert "ASK ME" in text and "TELL ME" in text
+        assert "/brief" in text and "/pending" in text and "/run" in text
+        # It must never leave the owner thinking an instruction is a done deed.
+        assert "not the same as it being done" in text
 
     def test_start_is_help_too(self, db, telegram):
         """The first thing anyone types to a new bot is /start."""
         listener.handle_update(say("/start"))
-        assert [p for m, p in telegram if m == "sendMessage"][0]["text"].startswith("I am the")
+        assert "ASK ME" in [p for m, p in telegram if m == "sendMessage"][0]["text"]
 
     def test_brief_sends_tonights_brief_on_demand(self, db, telegram):
         listener.handle_update(say("/brief"))
@@ -404,3 +404,193 @@ class TestWhoMayAsk:
         monkeypatch.setattr(listener, "api", fake_api)
         listener.poll_once(None)
         assert asked["allowed_updates"] == ["callback_query", "message"]
+
+
+def press_run(agent: str, *, action: str = "run", chat: str = CHAT, user: int = 42) -> dict:
+    """A press on a "Run X?" confirmation card."""
+    return {
+        "update_id": 4,
+        "callback_query": {
+            "id": "cbq-run",
+            "data": f"{action}:{agent}",
+            "from": {"id": user, "username": "sharif"},
+            "message": {"message_id": 12, "chat": {"id": int(chat)}},
+        },
+    }
+
+
+@pytest.fixture
+def routes(monkeypatch):
+    """Route every instruction to a chosen intent, without a model."""
+    from restaurant_ai.assistant import Intent
+
+    box = {"intent": Intent(kind="question")}
+    monkeypatch.setattr("restaurant_ai.assistant.route", lambda text: box["intent"])
+    monkeypatch.setattr("restaurant_ai.assistant.answer", lambda q, session=None: f"answering: {q}")
+    return box
+
+
+def _sent(calls) -> list[str]:
+    return [p["text"] for m, p in calls if m == "sendMessage"]
+
+
+class TestTakingAnInstruction:
+    def test_an_instruction_proposes_the_agent_and_asks_first(self, db, telegram, routes):
+        """A misroute must cost a wrong sentence, not a wrong run."""
+        from restaurant_ai.assistant import Intent
+
+        routes["intent"] = Intent(kind="run", agent="stock_reorder")
+        described = listener.handle_update(say("restock the kitchen"))
+
+        assert described == "proposed: stock_reorder"
+        card = [p for m, p in telegram if m == "sendMessage"][0]
+        assert "Rain" in card["text"]
+        buttons = card["reply_markup"]["inline_keyboard"][0]
+        assert buttons[0]["callback_data"] == "run:stock_reorder"
+        assert buttons[1]["callback_data"] == "drop:stock_reorder"
+        # Nothing has run.
+        assert "on it" not in " ".join(_sent(telegram))
+
+    def test_confirming_runs_the_agent_and_reports_back(self, db, telegram, stock_is_low):
+        described = listener.handle_update(press_run("stock_reorder"))
+
+        assert described.startswith("ran stock_reorder")
+        sent = _sent(telegram)
+        assert "Rain is on it…" in sent[0]
+        # The outcome is reported, never assumed.
+        assert any("Rain:" in line for line in sent[1:])
+
+    def test_a_parked_run_says_it_still_needs_approving(self, db, telegram, stock_is_low):
+        """Telling me to do it is not the same as it being done."""
+        listener.handle_update(press_run("stock_reorder"))
+        assert any("needs your approval" in line for line in _sent(telegram))
+
+    def test_declining_runs_nothing(self, db, telegram):
+        described = listener.handle_update(press_run("stock_reorder", action="drop"))
+        assert described == "declined: stock_reorder"
+        assert "nothing run" in " ".join(_sent(telegram))
+
+    def test_the_owners_own_words_reach_the_agent(self, db, telegram, routes, monkeypatch):
+        from restaurant_ai.assistant import Intent
+
+        seen = {}
+
+        def spy(spec, **kwargs):
+            seen.update(kwargs)
+
+            class Outcome:
+                summary = "done"
+                interrupted = False
+
+            return Outcome()
+
+        monkeypatch.setattr("restaurant_ai.kernel.runner.run_agent", spy)
+        routes["intent"] = Intent(kind="run", agent="stock_reorder")
+        listener.handle_update(say("order extra prawns for the weekend"))
+        listener.handle_update(press_run("stock_reorder"))
+
+        assert seen["trigger"] == "telegram"
+        assert seen["trigger_payload"] == {"instruction": "order extra prawns for the weekend"}
+
+    def test_an_unclear_instruction_asks_rather_than_guessing(self, db, telegram, routes):
+        from restaurant_ai.assistant import Intent
+
+        routes["intent"] = Intent(kind="unclear", reason="I could not tell.")
+        assert listener.handle_update(say("do the thing")) == "unclear"
+        text = _sent(telegram)[0]
+        assert "I could not tell." in text
+        # It always names the way through.
+        assert "/run rain" in text
+
+    def test_a_question_still_gets_an_answer(self, db, telegram, routes):
+        listener.handle_update(say("how much chicken?"))
+        assert _sent(telegram) == ["answering: how much chicken?"]
+
+
+class TestTheDeterministicPath:
+    """/run cannot be misrouted: no model is consulted."""
+
+    def test_run_by_person_name_works(self, db, telegram, stock_is_low):
+        assert listener.handle_update(say("/run rain")).startswith("ran stock_reorder")
+
+    def test_run_by_slug_works(self, db, telegram, stock_is_low):
+        assert listener.handle_update(say("/run stock_reorder")).startswith("ran stock_reorder")
+
+    def test_an_unknown_name_is_refused_by_name(self, db, telegram):
+        described = listener.handle_update(say("/run gordon"))
+        assert described == "run: unknown agent gordon"
+        assert "nobody called" in _sent(telegram)[0]
+        assert "/agents" in _sent(telegram)[0]
+
+    def test_run_with_nobody_named_asks_who(self, db, telegram):
+        listener.handle_update(say("/run"))
+        assert "Run whom?" in _sent(telegram)[0]
+
+    def test_agents_lists_everyone_with_the_command_to_run_them(self, db, telegram):
+        listener.handle_update(say("/agents"))
+        text = _sent(telegram)[0]
+        assert "/run stock_reorder" in text and "Rain" in text
+        # One runnable line per agent, plus the header that explains the form.
+        assert text.count("\n  /run ") == 11
+
+    def test_an_unknown_command_says_so_rather_than_guessing(self, db, telegram):
+        listener.handle_update(say("/frobnicate"))
+        assert "I do not know /frobnicate" in _sent(telegram)[0]
+
+
+class TestItNeverGoesQuiet:
+    def test_a_failure_is_reported_into_the_chat(self, db, telegram, monkeypatch):
+        """Silence reads as success. It must not be the answer to a crash."""
+        monkeypatch.setattr(
+            listener,
+            "api",
+            lambda method, **kw: (
+                {"ok": True, "result": [say("how are we?")]}
+                if method == "getUpdates"
+                else telegram.append((method, kw)) or {"ok": True, "result": {}}
+            ),
+        )
+        monkeypatch.setattr(
+            "restaurant_ai.assistant.route",
+            lambda text: (_ for _ in ()).throw(RuntimeError("the model is on fire")),
+        )
+
+        offset, handled = listener.poll_once(None)
+
+        assert offset == 3
+        assert handled[0].startswith("failed:")
+        told = _sent(telegram)
+        assert told and "the model is on fire" in told[0]
+        assert "Nothing was changed." in told[0]
+
+    def test_a_stranger_gets_no_apology_either(self, db, telegram, monkeypatch):
+        monkeypatch.setattr(
+            listener,
+            "api",
+            lambda method, **kw: (
+                {"ok": True, "result": [say("hi", chat="111", user=222)]}
+                if method == "getUpdates"
+                else telegram.append((method, kw)) or {"ok": True, "result": {}}
+            ),
+        )
+        listener.poll_once(None)
+        assert not _sent(telegram)
+
+    def test_an_agent_that_throws_is_reported_not_swallowed(self, db, telegram, monkeypatch):
+        monkeypatch.setattr(
+            "restaurant_ai.kernel.runner.run_agent",
+            lambda spec, **kw: (_ for _ in ()).throw(RuntimeError("postgres went away")),
+        )
+        described = listener.handle_update(press_run("stock_reorder"))
+        assert described.startswith("failed:")
+        assert "postgres went away" in _sent(telegram)[-1]
+
+
+class TestWhoMayInstruct:
+    def test_a_stranger_cannot_run_an_agent(self, db, telegram, monkeypatch):
+        monkeypatch.setattr(
+            "restaurant_ai.kernel.runner.run_agent",
+            lambda spec, **kw: pytest.fail("a stranger must never start an agent"),
+        )
+        with pytest.raises(listener.UnauthorisedPresser):
+            listener.handle_update(press_run("stock_reorder", chat="111", user=222))

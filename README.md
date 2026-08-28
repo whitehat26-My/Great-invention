@@ -500,37 +500,94 @@ only colour carrying meaning is the status dot, and every dot has a text legend.
 
 ---
 
-## Asking the restaurant a question
+## Telling the restaurant what to do
 
-The approvals chat used to run one way: the agents wrote, and the owner's whole
-vocabulary was two buttons. `restaurant-ai telegram-listen` now answers questions
-in the same chat.
+The approvals chat used to run one way. The agents wrote, the brief arrived at
+23:55, and the owner's entire vocabulary was two buttons. `restaurant-ai
+telegram-listen` now takes both halves of the conversation.
+
+**Ask it something** and it answers from the restaurant's own state:
 
 ```
 you   how much chicken do we have?
 you   what are today's numbers?
 you   why did Rain order rice?
-you   /brief      tonight's brief, on demand
-you   /pending    what is waiting for you
-you   /help       what you can ask
 ```
+
+**Tell it to do something** and it works out whose job it is, shows you, and
+asks before anything runs:
+
+```
+you   we're running low, sort the stock out
+
+bot   That is Rain's job — Stock Tracking & Auto-Reorder Agent.
+      Monitors real-time ingredient levels via POS-driven deductions and
+      drafts purchase orders when stock hits its reorder threshold.
+      Run Rain now?
+      [ Run Rain ]   [ No ]
+
+you   (presses Run Rain)
+
+bot   Rain is on it…
+bot   Rain: Refreshing reorder policies from recent usage, then drafting
+      purchase orders for anything at or below the updated reorder points.
+      The card above needs your approval before it happens.
+```
+
+```
+/run <name>  run that agent now, no guessing  (e.g. /run rain)
+/agents      who does what
+/brief       tonight's brief, on demand
+/pending     what is waiting for you
+/help        all of the above
+```
+
+### Why it does not simply do as it is told
+
+Three separate things stand between an instruction and a mistake, because the
+owner finds out which agent was picked only *after* it has run.
+
+**Routing is a judgement, so it is confirmed.** The router answers `QUESTION`,
+`RUN <agent>` or `UNCLEAR` and nothing else, and it is told never to guess
+between two agents — the owner would rather be asked than surprised. A misroute
+then costs a wrong sentence on the screen rather than a wrong agent in the audit
+trail. Answering `RUN` and then naming something that is not an agent is itself
+treated as a misroute, not as licence to pick the nearest match.
+
+**There is always a path that no model touches.** `/run rain` resolves the name
+against the registry and starts that agent — no classifier, nothing to
+misunderstand, and it still works when the model is rate-limited or unreachable.
+A router that cannot answer routes to `UNCLEAR`, never to a coin-flip, and the
+reply names this path.
+
+**Being told is not the same as being done.** The agent runs its own graph with
+its own tools behind the same approval gate as always: telling Rain to reorder
+produces drafts and a card, not a purchase order. Every run reports what
+actually happened — parked, finished, or failed — and a run that throws says so
+with the error. Silence is never the answer to anything, because silence reads
+exactly like success: if handling an update fails anywhere, the failure is sent
+into the chat rather than only into the log.
+
+### The desk itself still cannot act
+
+Answering is **read-only by construction, not by instruction**. The model that
+answers questions is given no tools at all — not a gated tool, not a tool it is
+told to avoid. A prompt saying "do not change anything" is a request; a model
+with nothing bound to it cannot write to this restaurant whatever it decides to
+do. Running an agent is a separate, confirmed path through the registry, not
+something the answering model can reach.
 
 Answers come from `assistant.build_snapshot` — every agent's own `perceive`
 view, the same ones the brief reports and the agents plan from, so the desk and
 the agent that acts cannot disagree about the state of the restaurant. One
 broken view is a line in the answer, not a failure to answer.
 
-**It is read-only by construction, not by instruction.** The model is given no
-tools at all — not a gated tool, not a tool it is told to avoid. A prompt that
-says "do not change anything" is a request; a model with nothing bound to it
-cannot write to this restaurant whatever it decides to do. Ask it to place an
-order and it says whose job that is and that the card needs approving. The same
-allow-list guards asking as guards pressing, and a message from an unknown chat
+The same allow-list guards asking, instructing and pressing, and an unknown chat
 gets silence rather than a refusal — a reply would confirm the bot exists and
 hand a stranger the restaurant's numbers.
 
-`restaurant-ai ask "..."` is the same desk from a terminal, which is how it is
-tested without Telegram.
+`restaurant-ai ask "..."` is the question desk from a terminal, which is how it
+is tested without Telegram.
 
 ---
 

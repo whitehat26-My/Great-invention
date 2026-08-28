@@ -64,6 +64,11 @@ def handle_update(update: dict[str, Any]) -> str | None:
     if "message" in update:
         return handle_message(update["message"])
 
+    if "callback_query" in update:
+        data = (update["callback_query"] or {}).get("data", "")
+        if data.startswith(("run:", "drop:")):
+            return handle_run_press(update["callback_query"])
+
     interaction = parse_callback(update)
     if interaction is None:
         return None
@@ -101,20 +106,28 @@ def handle_update(update: dict[str, Any]) -> str | None:
     return f"{verdict} by {interaction.user} — {summary}"
 
 
-_HELP = """I am the question desk for this restaurant. Ask me anything:
+_HELP = """I run this restaurant with you. Two things you can do:
 
+ASK ME
   "how much chicken do we have?"
   "what are today's numbers?"
   "who is on tomorrow?"
-  "why did Rain order rice?"
 
-Commands:
-  /brief    tonight's brief, right now
-  /pending  what is waiting for your approval
-  /help     this message
+TELL ME
+  "restock the kitchen"
+  "build next week's roster"
+  "close the day"
+  I work out whose job it is and ask you to confirm before anything runs.
 
-I can only read. Anything that changes the restaurant comes to you as a card to
-approve."""
+COMMANDS
+  /run <name>  run that agent now, no guessing  (e.g. /run rain)
+  /agents      who does what
+  /brief       tonight's brief, right now
+  /pending     what is waiting for your approval
+  /help        this message
+
+Nothing that spends money or changes a price happens without a card you
+approve — telling me to do it is not the same as it being done."""
 
 
 def handle_message(message: dict[str, Any]) -> str | None:
@@ -145,13 +158,173 @@ def handle_message(message: dict[str, Any]) -> str | None:
         reply = _brief_text()
     elif command == "/pending":
         reply = _pending_text()
+    elif command == "/agents":
+        reply = _agents_text()
+    elif command == "/run":
+        return _run_command(chat_id, text)
+    elif command:
+        reply = f"I do not know {command}. Try /help."
     else:
-        from restaurant_ai.assistant import answer
-
-        reply = answer(text)
+        return _instruction_or_question(chat_id, text)
 
     api("sendMessage", chat_id=chat_id, text=reply)
     return f"answered: {text[:60]}"
+
+
+def _instruction_or_question(chat_id: Any, text: str) -> str:
+    """Work out whether the owner asked something or told me to do something."""
+    from restaurant_ai.assistant import Intent, answer, route
+
+    intent: Intent = route(text)
+
+    if intent.kind == "run" and intent.agent:
+        _propose_run(chat_id, intent.agent, text)
+        return f"proposed: {intent.agent}"
+
+    if intent.kind == "unclear":
+        api(
+            "sendMessage",
+            chat_id=chat_id,
+            text=(
+                f"{intent.reason or 'I could not tell what you meant.'}\n\n"
+                "Ask me a question, or name the agent outright — /run rain, "
+                "/run henry. /agents lists them."
+            ),
+        )
+        return "unclear"
+
+    api("sendMessage", chat_id=chat_id, text=answer(text))
+    return f"answered: {text[:60]}"
+
+
+def _propose_run(chat_id: Any, agent: str, instruction: str) -> None:
+    """Say what would run, and ask first.
+
+    Routing is a judgement, and the owner finds out which agent was picked only
+    after it has run. Confirming turns a misroute into a wrong sentence on the
+    screen instead of a wrong agent in the audit trail.
+    """
+    from restaurant_ai.kernel.registry import get_agent
+
+    spec = get_agent(agent)
+    _REMEMBERED[agent] = instruction
+    api(
+        "sendMessage",
+        chat_id=chat_id,
+        text=(
+            f"That is {spec.person}'s job — {spec.title}.\n\n"
+            f"{spec.description}\n\n"
+            f"Run {spec.person} now?"
+        ),
+        reply_markup={
+            "inline_keyboard": [
+                [
+                    {"text": f"Run {spec.person}", "callback_data": f"run:{agent}"},
+                    {"text": "No", "callback_data": f"drop:{agent}"},
+                ]
+            ]
+        },
+    )
+
+
+# What the owner actually said, kept only between proposing a run and the press
+# that confirms it, so the agent is told why it was woken. Losing it (a restart
+# between the two) costs context, never correctness — the agent's job is defined
+# by its own spec, not by this.
+_REMEMBERED: dict[str, str] = {}
+
+
+def handle_run_press(query: dict[str, Any]) -> str:
+    """A press on a "Run X?" card. Same allow-list as every other press."""
+    message = query.get("message") or {}
+    chat_id = (message.get("chat") or {}).get("id")
+    user_id = (query.get("from") or {}).get("id")
+
+    if not permitted(chat_id, user_id):
+        log.warning("ignored a run press from outside the allow-list", chat=chat_id, user=user_id)
+        answer_callback(query.get("id", ""), "You are not authorised to run this.")
+        raise UnauthorisedPresser(f"chat={chat_id} user={user_id}")
+
+    action, _, agent = (query.get("data") or "").partition(":")
+    if action == "drop":
+        _REMEMBERED.pop(agent, None)
+        answer_callback(query.get("id", ""), "Left alone.")
+        api("sendMessage", chat_id=chat_id, text="Fine — nothing run.")
+        return f"declined: {agent}"
+
+    answer_callback(query.get("id", ""), "Running.")
+    return _run_now(chat_id, agent, _REMEMBERED.pop(agent, ""))
+
+
+def _run_command(chat_id: Any, text: str) -> str:
+    """``/run rain`` — the path that cannot be misrouted.
+
+    No model decides anything here. This is what the owner falls back to when
+    the router is unsure, and what still works when it cannot be reached at all.
+    """
+    from restaurant_ai.assistant import find_agent
+
+    wanted = text.split(maxsplit=1)[1].strip() if " " in text else ""
+    if not wanted:
+        api("sendMessage", chat_id=chat_id, text="Run whom? Try /run rain. /agents lists them.")
+        return "run: no agent named"
+
+    agent = find_agent(wanted)
+    if agent is None:
+        api(
+            "sendMessage",
+            chat_id=chat_id,
+            text=f"I have nobody called “{wanted}”. /agents lists them.",
+        )
+        return f"run: unknown agent {wanted}"
+
+    return _run_now(chat_id, agent, "")
+
+
+def _run_now(chat_id: Any, agent: str, instruction: str) -> str:
+    """Run one agent and report what actually happened.
+
+    Every path out of here sends the owner a message. A run that fails, parks or
+    does nothing at all is reported as that — silence would read as success.
+    """
+    from restaurant_ai.kernel.registry import get_agent
+    from restaurant_ai.kernel.runner import run_agent
+
+    spec = get_agent(agent)
+    api("sendMessage", chat_id=chat_id, text=f"{spec.person} is on it…")
+
+    try:
+        outcome = run_agent(
+            spec,
+            trigger="telegram",
+            trigger_payload={"instruction": instruction} if instruction else None,
+        )
+    except Exception as exc:
+        log.error("agent run failed", agent=agent, error=str(exc))
+        api(
+            "sendMessage",
+            chat_id=chat_id,
+            text=f"{spec.person} could not finish: {type(exc).__name__}: {exc}",
+        )
+        return f"failed: {agent}: {exc}"
+
+    summary = (outcome.summary or "").strip() or "nothing to report"
+    if outcome.interrupted:
+        text = f"{spec.person}: {summary}\n\nThe card above needs your approval before it happens."
+    else:
+        text = f"{spec.person}: {summary}"
+    api("sendMessage", chat_id=chat_id, text=text[:3800])
+    return f"ran {agent}{' (parked)' if outcome.interrupted else ''}"
+
+
+def _agents_text() -> str:
+    from restaurant_ai.kernel.registry import all_agents
+
+    lines = ["Who works here — /run <name> puts any of them to work now:", ""]
+    for name, spec in sorted(all_agents().items(), key=lambda kv: kv[1].department):
+        lines.append(f"{spec.person} — {spec.title}")
+        lines.append(f"  /run {name}")
+    return "\n".join(lines)
 
 
 def _brief_text() -> str:
@@ -203,10 +376,36 @@ def poll_once(offset: int | None) -> tuple[int | None, list[str]]:
         except Exception as exc:
             log.error("update failed", error=str(exc))
             handled.append(f"failed: {type(exc).__name__}: {exc}")
+            _apologise(update, exc)
             continue
         if described:
             handled.append(described)
     return offset, handled
+
+
+def _apologise(update: dict[str, Any], exc: Exception) -> None:
+    """Tell the owner the thing they asked for did not happen.
+
+    Everything above this line is caught so one bad update cannot stop the
+    listener. That protects the process and abandons the person: they typed
+    something, and nothing came back — which reads exactly like being ignored,
+    or worse, like it worked. If the reply itself cannot be sent there is
+    genuinely nothing left to do but log it.
+    """
+    message = update.get("message") or (update.get("callback_query") or {}).get("message") or {}
+    chat_id = (message.get("chat") or {}).get("id")
+    # The chat is the allow-list, and an apology to a stranger would confirm the
+    # bot exists as surely as an answer would.
+    if chat_id is None or not permitted(chat_id, None):
+        return
+    try:
+        api(
+            "sendMessage",
+            chat_id=chat_id,
+            text=f"That did not work: {type(exc).__name__}: {exc}\n\nNothing was changed.",
+        )
+    except Exception as reply_failure:  # pragma: no cover - the chat itself is down
+        log.error("could not report the failure", error=str(reply_failure))
 
 
 def listen(on_event: Any = None, max_rounds: int | None = None) -> None:
