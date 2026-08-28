@@ -427,3 +427,83 @@ class TestBuildRoster:
     def test_empty_requirements(self):
         result = build_roster([], [_staff("s1")])
         assert result.assignments == [] and result.total_cost == D("0")
+
+
+class TestPackingDoesNotBuyIdleHours:
+    """`pack_shifts` promises cover "with as few shift-hours as possible".
+
+    It used to maximise hours *covered* instead, with length only breaking
+    ties — so a longer window always beat a shorter one if it reached one more
+    needed hour, however many idle hours came with it. And anchoring each pass
+    on the busiest uncovered hour meant that when every outstanding hour tied,
+    only windows containing the earliest were even considered.
+    """
+
+    def _covers(self, need, shifts):
+        rostered: dict[int, int] = {}
+        for start, end in shifts:
+            for hour in range(start, end):
+                rostered[hour] = rostered.get(hour, 0) + 1
+        return all(rostered.get(hour, 0) >= count for hour, count in need.items())
+
+    def test_a_lull_between_two_busy_blocks_is_not_paid_for(self):
+        """The barista: wanted once at noon, then through dinner.
+
+        Thirteen hours were rostered for five hours of need — one nine-hour
+        shift dragged across the whole afternoon because it happened to reach
+        the evening block too.
+        """
+        need = {12: 1, 18: 1, 19: 1, 20: 1, 21: 1}
+        shifts = pack_shifts(need)
+
+        assert self._covers(need, shifts), "every needed hour must still be covered"
+        paid = sum(end - start for start, end in shifts)
+        assert paid <= 8, f"five hours of need should not cost more than eight, got {paid}"
+        # And nobody is rostered straight through the dead afternoon.
+        assert not any(start <= 14 and end >= 18 for start, end in shifts)
+
+    def test_every_needed_hour_is_still_covered(self):
+        # The invariant that must never be traded away for efficiency.
+        for need in (
+            {11: 1, 12: 2, 13: 2, 14: 1},
+            {12: 1, 18: 1, 19: 1, 20: 1, 21: 1},
+            {11: 1, 12: 1, 13: 1, 14: 1, 15: 1, 16: 1, 17: 1, 18: 2, 19: 2, 20: 1},
+            {20: 1},
+            {11: 3, 12: 3},
+        ):
+            shifts = pack_shifts(need)
+            assert self._covers(need, shifts), f"{need} was under-covered by {shifts}"
+
+    def test_a_solid_block_is_not_padded(self):
+        # Contiguous need that already fits a shift should cost exactly itself.
+        need = {18: 1, 19: 1, 20: 1, 21: 1}
+        assert sum(end - start for start, end in pack_shifts(need)) == 4
+
+    def test_a_peak_gets_a_second_body_not_a_second_full_day(self):
+        need = {11: 1, 12: 1, 13: 2, 14: 2, 15: 1, 16: 1}
+        shifts = pack_shifts(need)
+        assert self._covers(need, shifts)
+        paid = sum(end - start for start, end in shifts)
+        assert paid <= sum(need.values()) + 4, f"{paid} hours for {sum(need.values())} of need"
+
+    def test_the_whole_roster_stays_close_to_what_it_needs(self):
+        """End to end across every role, against the real demand shape."""
+        from restaurant_ai.agents.workforce.shift_scheduling import DEFAULT_SHAPE
+        from restaurant_ai.db.models import ShiftRole
+        from restaurant_ai.domain.scheduling import hourly_headcount
+
+        total = sum(DEFAULT_SHAPE.values(), D("0"))
+        covers = {h: D("179") * share / total for h, share in DEFAULT_SHAPE.items()}
+
+        needed = packed = 0
+        for role in ShiftRole:
+            need = hourly_headcount(covers, role)
+            if not need:
+                continue
+            shifts = pack_shifts(need)
+            assert self._covers(need, shifts), f"{role} under-covered"
+            needed += sum(need.values())
+            packed += sum(end - start for start, end in shifts)
+
+        # Minimum shift lengths mean some slack is unavoidable; 31% was not.
+        assert packed <= needed * 1.2, f"{packed}h rostered against {needed}h needed"
