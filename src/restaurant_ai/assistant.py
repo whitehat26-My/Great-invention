@@ -7,8 +7,10 @@ chicken is left, what tomorrow's roster looks like. The answer existed in the
 database the whole time; nothing would say it out loud.
 
 This is the other half of the conversation. A question in the approvals chat is
-answered from the restaurant's own state, in the same place the cards arrive, on
-the phone the owner already has in their hand.
+answered from the restaurant's own state, and an instruction — "restock the
+kitchen", "build next week's roster" — is routed to the agent whose job it is,
+in the same place the cards arrive, on the phone the owner already has in their
+hand.
 
 Two decisions shape it:
 
@@ -22,11 +24,18 @@ Two decisions shape it:
   against — so the answer and the agent that acts cannot disagree about the
   state of the restaurant. Like the brief, one broken view is a line, not a
   failure to answer.
+- **An instruction is routed, never improvised.** Telling the desk to do
+  something does not give this model the power to do it. It names the agent
+  whose job it is and asks the owner to confirm; the agent then runs its own
+  graph, with its own tools, behind the same approval gate as always. Routing
+  that is not certain says so rather than guessing — a desk that acts on a
+  coin-flip between two agents is worse than one that asks.
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
@@ -176,3 +185,121 @@ def _offline_answer(question: str, snapshot: dict[str, Any]) -> str:
         else "Nothing is waiting for your approval."
     )
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Routing an instruction
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Intent:
+    """What the owner wants, as far as the desk can tell.
+
+    ``kind`` is one of ``question``, ``run`` or ``unclear``. Uncertainty is a
+    first-class answer: a desk that guesses between two agents is worse than one
+    that asks, because the owner finds out which it picked only afterwards.
+    """
+
+    kind: str
+    agent: str | None = None
+    reason: str = ""
+
+
+def find_agent(text: str) -> str | None:
+    """Match a name the owner typed to an agent slug, or nothing.
+
+    Deterministic and model-free: this is what ``/run rain`` uses, so there is
+    always one path to every agent that cannot be misread, misclassified, or
+    knocked out by a rate limit.
+    """
+    from restaurant_ai.kernel.registry import all_agents
+
+    wanted = (text or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if not wanted:
+        return None
+    for name, spec in all_agents().items():
+        if wanted == name or wanted == (spec.person or "").lower():
+            return name
+    return None
+
+
+def _agent_menu() -> str:
+    from restaurant_ai.kernel.registry import all_agents
+
+    return "\n".join(
+        f"{name} — {spec.person}, {spec.title}: {spec.description}"
+        for name, spec in sorted(all_agents().items())
+    )
+
+
+_ROUTER_PROMPT = """Decide what the owner of this restaurant wants.
+
+Answer with exactly one line and nothing else — no explanation, no punctuation
+beyond what is shown:
+
+QUESTION
+RUN <agent>
+UNCLEAR
+
+The agents you may name:
+{menu}
+
+Rules:
+- Asking *about* the restaurant is QUESTION, even when it names an agent.
+  "why did Rain order rice?" and "how much stock do we have?" are QUESTION.
+- Telling you to *do* something an agent does is RUN.
+  "restock the kitchen" is RUN stock_reorder. "build next week's roster" is
+  RUN shift_scheduling.
+- If two agents could both fit, or none clearly does, answer UNCLEAR.
+  Never guess between two. The owner would rather be asked than surprised.
+- Answer UNCLEAR for anything that is not about running this restaurant."""
+
+
+def route(instruction: str) -> Intent:
+    """Question, instruction, or neither — decided before anything happens.
+
+    A model that is unreachable or rate-limited routes to ``unclear``, not to a
+    guess: the deterministic ``/run <agent>`` path is what the owner falls back
+    to, and it is named in the reply.
+    """
+    from restaurant_ai.kernel import llm
+    from restaurant_ai.kernel.graph import _message_text
+
+    text = (instruction or "").strip()
+    if not text:
+        return Intent(kind="unclear", reason="Nothing was said.")
+
+    if llm.is_fake():
+        # Without a model there is no classifier. Naming an agent still works,
+        # because that path never needed one.
+        named = find_agent(text)
+        if named:
+            return Intent(kind="run", agent=named, reason="you named the agent")
+        return Intent(kind="question", reason="no model configured to route with")
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    try:
+        model = llm.get_model("conversational")
+        response = model.invoke(
+            [
+                SystemMessage(content=_ROUTER_PROMPT.format(menu=_agent_menu())),
+                HumanMessage(content=text),
+            ]
+        )
+        verdict = _message_text(response).strip().splitlines()[0].strip()
+    except Exception as exc:
+        log.warning("routing failed", error=str(exc))
+        return Intent(kind="unclear", reason=f"I could not work out what you meant ({exc}).")
+
+    if verdict.upper().startswith("QUESTION"):
+        return Intent(kind="question")
+    if verdict.upper().startswith("RUN"):
+        named = find_agent(verdict.split(maxsplit=1)[1] if " " in verdict else "")
+        if named:
+            return Intent(kind="run", agent=named)
+        # It answered RUN and then named something that is not an agent. That is
+        # a misroute, and running the wrong agent is worse than asking.
+        return Intent(kind="unclear", reason=f"I could not match “{verdict}” to an agent.")
+    return Intent(kind="unclear", reason="I could not tell whether that was a question or a job.")
