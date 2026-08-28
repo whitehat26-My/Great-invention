@@ -101,6 +101,12 @@ celery_app.conf.beat_schedule["drain-outbox"] = {
     "task": "restaurant_ai.worker.tasks.drain_events",
     "schedule": crontab(minute="*/2"),
 }
+# The owner's brief goes out once the books are closed: Camelia reports at
+# 23:45, the brief at 23:55, so its money section carries her verdict.
+celery_app.conf.beat_schedule["daily-brief"] = {
+    "task": "restaurant_ai.worker.tasks.send_daily_brief",
+    "schedule": crontab(hour="23", minute="55"),
+}
 celery_app.conf.beat_schedule["expire-approvals"] = {
     "task": "restaurant_ai.worker.tasks.expire_stale_approvals",
     "schedule": crontab(hour="*/4", minute="5"),

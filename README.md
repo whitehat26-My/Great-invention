@@ -430,6 +430,38 @@ deployment that missed the line, it meant anyone could approve anything.
 
 ---
 
+## The owner's daily brief
+
+The phone is the UI. Every night at 23:55 — ten minutes after Camelia closes the
+books — one message lands in the same Telegram chat where the approval cards
+arrive: every department, what failed, and what needs you.
+
+```
+The Great Invention — daily brief, 2026-08-28
+
+MONEY — Emil & Camelia
+  revenue 4,169.70 · 179 covers · avg check 23.29
+  COGS 33.0% · labour 37.0% · prime 71.0% · margin 29.0%
+  Prime cost 70.5% is unsustainable.
+
+SUPPLY — Rain & Suri
+  41 ingredients tracked, 7 at/below reorder point
+    Pandan leaf: 1.0d cover (on hand 108.80, on order 0.00)
+  3 purchase order(s) out with suppliers
+...
+NEEDS YOU
+  - Rain (Stock Tracking & Auto-Reorder Agent): 3 purchase order(s)
+    totalling 5093.80 (value 5093.80)
+```
+
+`restaurant-ai brief` prints it on demand; `--send` delivers it to Telegram.
+Two properties: each section reports what its agents actually see (supply is
+Rain's own `perceive`, so the brief and the agents cannot disagree), and a
+broken section degrades to one "unavailable" line rather than costing you the
+other five at midnight.
+
+---
+
 ## The operating rhythm
 
 Celery beat, in the restaurant's own timezone (a `23:30` that fires at `07:30`
