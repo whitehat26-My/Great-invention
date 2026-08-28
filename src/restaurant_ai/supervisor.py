@@ -256,21 +256,32 @@ class Supervisor:
                 self._start(child)
 
     def stop_all(self, grace_seconds: float = 10.0) -> None:
-        """Ctrl-C for everyone: terminate, wait, then insist."""
+        """Ctrl-C for everyone: terminate, wait, then insist.
+
+        This must not be stoppable by its own plumbing. The children live in
+        their own sessions, so if shutdown dies half-way they survive as
+        orphans — and it has died half-way: `up | head` closed stdout, the
+        first log write raised BrokenPipeError mid-cleanup, and seven processes
+        outlived their supervisor. Every step is therefore fenced; the logging
+        is decoration and the killing is the job.
+        """
         for child in self.children:
-            if child.process is not None and child.process.poll() is None:
-                child.process.terminate()
+            with contextlib.suppress(Exception):
+                if child.process is not None and child.process.poll() is None:
+                    child.process.terminate()
         deadline = time.monotonic() + grace_seconds
         for child in self.children:
             if child.process is None:
                 continue
-            remaining = max(0.1, deadline - time.monotonic())
-            try:
-                child.process.wait(timeout=remaining)
-            except subprocess.TimeoutExpired:
-                child.process.kill()
-                child.process.wait()
-            log.info("stopped", child=child.name)
+            with contextlib.suppress(Exception):
+                remaining = max(0.1, deadline - time.monotonic())
+                try:
+                    child.process.wait(timeout=remaining)
+                except subprocess.TimeoutExpired:
+                    child.process.kill()
+                    child.process.wait()
+            with contextlib.suppress(Exception):
+                log.info("stopped", child=child.name)
 
     # -- reporting ----------------------------------------------------------
 
@@ -306,6 +317,11 @@ def run(children: dict[str, list[str]], poll_seconds: float = 1.0) -> int:
                 log.error("every child has been given up on — nothing left to supervise")
                 return 1
     except KeyboardInterrupt:
-        log.info("stopping everything")
-        supervisor.stop_all()
+        with contextlib.suppress(Exception):
+            log.info("stopping everything")
         return 0
+    finally:
+        # However this loop ends — Ctrl-C, a crash in check(), a broken pipe —
+        # the children do not outlive it. They are in their own sessions, so
+        # nobody else will clean them up.
+        supervisor.stop_all()

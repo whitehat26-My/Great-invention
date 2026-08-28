@@ -792,28 +792,77 @@ def up(
     Close this window and the restaurant is off. On Windows, Task Scheduler can
     open it for you at logon — DEPLOY.md has the exact line.
     """
-    from sqlalchemy import text as sql_text
-
     from restaurant_ai.config import get_settings
-    from restaurant_ai.db.base import get_engine
+    from restaurant_ai.services import ensure_database
     from restaurant_ai.supervisor import default_children, run
 
-    # Fail fast on the one dependency every child shares. Without this the
-    # supervisor faithfully restarts four crash-looping processes and the
-    # screen fills with tracebacks that all mean "Postgres is not running".
-    try:
-        with get_engine().connect() as conn:
-            conn.execute(sql_text("select 1"))
-    except Exception as exc:
-        typer.echo(f"\n  Postgres is not reachable: {exc}", err=True)
-        typer.echo(
-            "  Start it first — `make up` (Linux/macOS) or `docker compose up -d "
-            "postgres redis` — then run `restaurant-ai up` again.",
-            err=True,
-        )
-        raise typer.Exit(code=1) from exc
+    # The one dependency every child shares. If Docker is present and awake,
+    # starting it is our job, not the owner's; when it is not, say which of the
+    # three situations this machine is in, each with its own fix — rather than
+    # supervising four crash loops that all mean "Postgres is not running".
+    ok, message = ensure_database()
+    if not ok:
+        typer.echo(f"\n  {message}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"\n  {message}")
 
     settings = get_settings()
     typer.echo(f"\n  {settings.restaurant_name} — everything, in this window.")
     typer.echo("  Ctrl-C stops the lot. Close the window and the restaurant is off.\n")
     raise typer.Exit(code=run(default_children(include_api=with_api)))
+
+
+@app.command("install-startup")
+def install_startup(
+    remove: bool = typer.Option(False, "--remove", help="Take the launcher back out."),
+) -> None:
+    """Open the restaurant's window automatically at Windows logon.
+
+    Writes a launcher into your own Startup folder, which needs no
+    administrator rights — `schtasks` does, and answers "Access is denied"
+    from a normal prompt. Run this once, from the project folder, inside the
+    virtualenv; --remove undoes it.
+    """
+    import os
+    from pathlib import Path as _Path
+
+    from restaurant_ai.services import (
+        remove_startup_script,
+        startup_folder,
+        write_startup_script,
+    )
+
+    if os.name != "nt":
+        typer.echo(
+            "\n  This installs a Windows logon launcher, and this is not Windows.\n"
+            "  On a server, `docker compose up -d --build` already survives reboots\n"
+            "  (restart: unless-stopped); on Linux/macOS laptops run `restaurant-ai up`.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    folder = startup_folder()
+    if folder is None:
+        typer.echo("\n  APPDATA is not set, so the Startup folder cannot be found.", err=True)
+        raise typer.Exit(code=1)
+
+    if remove:
+        if remove_startup_script(folder):
+            typer.echo("\n  Removed. The restaurant no longer starts at logon.")
+        else:
+            typer.echo("\n  Nothing installed — nothing to remove.")
+        return
+
+    project = _Path.cwd()
+    if not (project / ".env").exists():
+        typer.echo(
+            f"\n  No .env in {project} — run this from the Great-invention folder,\n"
+            "  so the launcher starts where the restaurant is configured.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    script = write_startup_script(project, folder)
+    typer.echo(f"\n  Installed: {script}")
+    typer.echo("  At every logon, Windows opens the restaurant's window itself.")
+    typer.echo("  Try it now by double-clicking that file. Undo with --remove.")

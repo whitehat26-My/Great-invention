@@ -150,23 +150,27 @@ resilience. It refuses to start at all if Postgres is not reachable, with the
 command that fixes it, rather than filling the screen with five processes'
 tracebacks that all mean the same thing.
 
-Postgres and Redis still need to exist first — `make up` on Linux/macOS, or on
-Windows, Docker Desktop running just the data services:
-
-```powershell
-docker compose up -d postgres redis
-restaurant-ai up
-```
+It starts the database itself. If Postgres is not reachable and Docker Desktop
+is installed and running, `up` runs `docker compose up -d postgres redis` for
+you and waits for Postgres to answer before starting anything that needs it.
+When it cannot, it says which of the three situations this machine is in — no
+Docker (install Docker Desktop, once), Docker installed but not running (open
+it from the Start menu), or the containers failed (Docker's own output says
+why) — because "start it first" is advice that gets answered with "how?".
 
 ### Starting it with Windows
 
-So a reboot does not mean a deaf bot, have Task Scheduler open that window at
-logon (one line, run in PowerShell from the project folder):
+So a reboot does not mean a deaf bot (run once, from the project folder, in the
+virtualenv — no administrator needed):
 
 ```powershell
-schtasks /create /tn "The Great Invention" /sc onlogon `
-  /tr "cmd /k cd /d $PWD && .venv\Scripts\restaurant-ai.exe up"
+restaurant-ai install-startup
 ```
+
+It writes a launcher into your own Startup folder, so Windows opens the
+restaurant's window at every logon; `--remove` undoes it. (`schtasks` is the
+textbook answer and it replies "Access is denied" from a normal prompt — the
+Startup folder is yours already.)
 
 Then stop the laptop sleeping with the lid open: Settings → System → Power →
 "When plugged in, put my device to sleep" → **Never**. A sleeping laptop is the
