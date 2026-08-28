@@ -334,6 +334,36 @@ which model answered — so what a day actually cost is a query, not an estimate
 
 ---
 
+## Putting your real menu in
+
+Every number the agents produce is computed from the catalog — recipes explode
+into ingredient demand, costs roll up into margins, margins into Irma's
+classifications and Camelia's verdicts. Until the catalog is yours, it is all
+demo data. The way in is a spreadsheet:
+
+```bash
+restaurant-ai menu-template menu.xlsx   # writes the fill-in workbook
+# fill in the sheets — the ReadMe tab explains every column
+restaurant-ai import-menu menu.xlsx --dry-run   # validate + cost, write nothing
+restaurant-ai import-menu menu.xlsx             # load it
+restaurant-ai import-menu menu.xlsx --replace-menu   # ...and retire dishes not in the file
+```
+
+The template's example rows are themselves a working import — run `import-menu`
+on the untouched file to see the whole flow. Two properties worth knowing:
+
+- **All-or-nothing.** Every problem is reported at once, each with its sheet
+  and row, and nothing loads until the file is clean. A half-imported catalog
+  is worse than none.
+- **It ends with proof.** Every dish is costed through the same recipe
+  explosion the agents use, and the import prints plate cost, margin and
+  derived allergens per dish. A dish that cannot be costed aborts the import.
+
+Re-importing the same file is a no-op; re-importing an edited one updates in
+place. Prices, recipes and packs change — the file stays the source of truth.
+
+---
+
 ## Connecting Telegram
 
 Approvals are the first thing worth connecting, because they are how you stay in
