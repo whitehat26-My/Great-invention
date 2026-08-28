@@ -52,7 +52,8 @@ def recognise(exc: Exception) -> str | None:
 
     if "does not exist" in text and "relation" in text:
         return (
-            "the database has no tables yet — run `alembic upgrade head`, then `restaurant-ai seed`"
+            "the database has no tables yet — `restaurant-ai up` creates them "
+            "(or `alembic upgrade head` on its own)"
         )
     if "current transaction is aborted" in text:
         # A follow-on from the first failure in the same transaction, not a

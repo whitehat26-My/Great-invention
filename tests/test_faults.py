@@ -75,3 +75,63 @@ class TestRecognisingWhatActuallyHappens:
     def test_the_empty_schema_case_is_detectable_for_migrating(self):
         assert database_has_no_tables(RuntimeError(UNDEFINED_TABLE))
         assert not database_has_no_tables(RuntimeError("connection refused"))
+
+
+class TestTheCliAnswersInWordsToo:
+    """`restaurant-ai seed` answered with a hundred lines of SQLAlchemy.
+
+    The Telegram path was taught to condense; the CLI was left dumping Rich
+    tracebacks at the person setting the restaurant up.
+    """
+
+    def test_a_recognised_fault_replaces_the_traceback(self, monkeypatch, capsys):
+        import pytest as _pytest
+
+        from restaurant_ai import cli
+
+        def explode():
+            raise RuntimeError('relation "allergen" does not exist')
+
+        monkeypatch.setattr(cli, "app", explode)
+        with _pytest.raises(SystemExit) as exit_info:
+            cli.main()
+
+        assert exit_info.value.code == 1
+        printed = capsys.readouterr().err
+        assert "no tables yet" in printed
+        assert "Traceback" not in printed
+        assert "sqlalchemy" not in printed.lower()
+
+    def test_an_unknown_fault_still_gets_its_traceback(self, monkeypatch):
+        """Hiding a failure nobody has diagnosed is worse than an ugly one."""
+        import pytest as _pytest
+
+        from restaurant_ai import cli
+
+        def explode():
+            raise ValueError("something nobody has seen before")
+
+        monkeypatch.setattr(cli, "app", explode)
+        with _pytest.raises(ValueError, match="nobody has seen"):
+            cli.main()
+
+    def test_a_normal_exit_passes_straight_through(self, monkeypatch):
+        """--help and friends exit via SystemExit; that is not a fault."""
+        import pytest as _pytest
+
+        from restaurant_ai import cli
+
+        def clean_exit():
+            raise SystemExit(0)
+
+        monkeypatch.setattr(cli, "app", clean_exit)
+        with _pytest.raises(SystemExit) as exit_info:
+            cli.main()
+        assert exit_info.value.code == 0
+
+    def test_the_fix_names_a_command_the_owner_has(self):
+        """`alembic` is not a word anyone reading this has heard."""
+        from restaurant_ai.faults import short_fault
+
+        said = short_fault(RuntimeError('relation "allergen" does not exist'))
+        assert "restaurant-ai up" in said

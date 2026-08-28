@@ -86,8 +86,19 @@ def seed(
     history_days: int = typer.Option(56, help="Days of synthetic trading history to generate."),
     skip_stock: bool = typer.Option(False, help="Skip opening stock balances."),
 ) -> None:
-    """Load the demo restaurant: menu, recipes, suppliers, staff, tables, SOPs."""
+    """Load the demo restaurant: menu, recipes, suppliers, staff, tables, SOPs.
+
+    Applies migrations first. Seeding a database with no tables is never what
+    anyone meant, and the failure it produced was a hundred lines of SQLAlchemy
+    internals ending in `relation "allergen" does not exist`.
+    """
     from restaurant_ai.db.seed import seed_all
+    from restaurant_ai.services import migrate_database
+
+    migrated, note = migrate_database()
+    if not migrated:
+        typer.echo(f"\n  {note}", err=True)
+        raise typer.Exit(code=1)
 
     counts = seed_all(history_days=history_days, with_stock=not skip_stock)
     typer.echo("Seeded:")
@@ -743,8 +754,33 @@ def _wrap(text: str, width: int) -> list[str]:
     return textwrap.wrap(text, width=width)
 
 
+def main() -> None:
+    """The console entry point: every command, with its faults in words.
+
+    Typer prints a Rich traceback for anything that escapes a command. That is
+    the right default for a library and the wrong one for the person setting up
+    a restaurant: `restaurant-ai seed` against an un-migrated database answered
+    with a hundred lines of SQLAlchemy internals whose last line was the only
+    one that mattered. Faults we recognise become that line and nothing else;
+    anything we do not recognise still gets the full traceback, because hiding
+    an unknown failure is worse than an ugly one.
+    """
+    from restaurant_ai.faults import recognise
+
+    try:
+        app()
+    except SystemExit:
+        raise
+    except Exception as exc:
+        known = recognise(exc)
+        if known is None:
+            raise
+        typer.echo(f"\n  {known}", err=True)
+        raise SystemExit(1) from exc
+
+
 if __name__ == "__main__":  # pragma: no cover
-    app()
+    main()
 
 
 @app.command("ask")
