@@ -60,10 +60,6 @@ SCHEDULE: dict[str, tuple[crontab, str]] = {
         crontab(minute="15"),
         "Hourly review sweep.",
     ),
-    "reservations": (
-        crontab(minute="*/30"),
-        "Process booking requests and check table turn times.",
-    ),
     "order_pacing": (
         crontab(minute="*/5", hour="11-23"),
         "Route and pace open tickets during service.",

@@ -33,14 +33,20 @@ five stop.
 
 ---
 
-## The thirteen agents
+## The eleven agents
 
 ### Front of House
 | Name | Agent | What it does |
 |---|---|---|
-| **Freddy** | Reservation & Table Management | Takes bookings from WhatsApp, web and phone; seats parties on the tightest-fitting table; flags tables running past their turn |
-| **Melissa** | Conversational Order | Phone, drive-thru and kiosk orders; interprets dietary requests against the actual recipe; routes to the POS |
 | **Aziera** | Feedback & Reputation | Sweeps Google/social hourly, classifies, drafts replies, escalates the serious ones — **approval-gated** |
+
+> Reservations (Freddy) and conversational ordering (Melissa) were retired. Both
+> conversed with guests live under their own names, and the order agent gave
+> allergen advice — a wrong answer there is a different kind of wrong from a
+> wrong purchase order. This is a management platform: nothing in it writes to a
+> guest unprompted. Aziera stays because she is already that shape, drafting
+> replies a human sends. Both live in git history if a booking or ordering
+> channel is ever wanted back.
 
 ### Kitchen & KDS
 | Name | Agent | What it does |
@@ -76,7 +82,7 @@ five stop.
 
 ## How an agent works
 
-All thirteen are the same compiled LangGraph graph. Only the `AgentSpec` differs
+All eleven are the same compiled LangGraph graph. Only the `AgentSpec` differs
 — prompt, tools, model tier, approval policy.
 
 ```
@@ -222,7 +228,7 @@ make check       # everything CI runs: lint, format, typecheck, tests
 Useful commands:
 
 ```bash
-restaurant-ai agents                     # the 13, by department
+restaurant-ai agents                     # the 11, by department
 restaurant-ai run-agent stock_reorder    # run one now
 restaurant-ai approvals                  # what is waiting for a human
 restaurant-ai approvals --resolve <id>   # approve it
@@ -248,12 +254,12 @@ default to Flash; a Pro model needs billing attached.
 
 Budget for the rate limit rather than the token cost. The quota that bites is
 `GenerateRequestsPerMinutePerProjectPerModel`, and measured against a real key
-it is **5 requests a minute**, not the 15 the docs suggest. A 13-agent pass is
-40–50 requests, so it takes about twenty minutes of mostly waiting. Two things
+it is **5 requests a minute**, not the 15 the docs suggest. An 11-agent pass is
+35–45 requests, so it takes about twenty minutes of mostly waiting. Two things
 make that bearable, and both are defaults:
 
 - The two tiers use **different Flash ids**. The quota is counted per model, so
-  sharing one makes the thirteen agents queue behind each other for nothing.
+  sharing one makes the eleven agents queue behind each other for nothing.
 - `LLM_MAX_RETRIES=10`. A rate-limited provider is a queue, not an error — but
   the client defaults (6 for Gemini, 2 for Claude) back off for about half the
   wait a free tier asks for and then give up, which fails the run and loses the

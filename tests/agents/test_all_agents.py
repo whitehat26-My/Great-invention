@@ -22,8 +22,11 @@ AGENT_NAMES = sorted(all_agents())
 
 
 class TestRegistry:
-    def test_thirteen_agents(self):
-        assert len(all_agents()) == 13
+    def test_eleven_agents(self):
+        # Was thirteen. Reservations and conversational ordering were retired:
+        # both conversed with guests live under their own names, and the order
+        # agent gave allergen advice.
+        assert len(all_agents()) == 11
 
     def test_six_departments(self):
         assert set(departments()) == {
@@ -40,7 +43,7 @@ class TestRegistry:
             d: len([a for a in all_agents().values() if a.department == d]) for d in departments()
         }
         assert counts == {
-            "front_of_house": 3,
+            "front_of_house": 1,
             "kitchen": 2,
             "supply": 2,
             "marketing": 2,

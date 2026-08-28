@@ -34,7 +34,6 @@ TIMELINE: list[tuple[time, str, str]] = [
     (time(6, 0), "prep_forecaster", "Morning prep forecast"),
     (time(7, 0), "stock_reorder", "Morning reorder sweep"),
     (time(9, 30), "supplier_invoice", "Deliveries and invoice matching"),
-    (time(10, 0), "reservations", "Booking intake"),
     (time(11, 0), "social_content", "Content and win-back offers"),
     (time(15, 0), "stock_reorder", "Afternoon reorder sweep"),
     (time(17, 0), "order_pacing", "Fire the dinner tickets"),

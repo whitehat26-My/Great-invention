@@ -565,7 +565,7 @@ class TestWhereTheRestaurantIs:
         from restaurant_ai.kernel.registry import get_agent
 
         settings = get_settings()
-        agent = get_agent("ordering")
+        agent = get_agent("stock_reorder")
         prompt = _system_prompt(agent)
 
         assert settings.restaurant_name in prompt
