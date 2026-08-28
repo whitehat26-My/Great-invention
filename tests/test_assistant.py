@@ -405,3 +405,26 @@ class TestExplainingAModelFailure:
         from restaurant_ai.assistant import explain_model_failure
 
         assert "ValueError" in explain_model_failure(ValueError("something odd"))
+
+
+class TestNamesPeopleActuallyType:
+    """`/run <Irma>` — the docs write `<name>`, and people paste the brackets."""
+
+    def test_the_placeholder_brackets_are_not_taken_literally(self):
+        from restaurant_ai.assistant import find_agent
+
+        assert find_agent("<Irma>") == "menu_pricing"
+        assert find_agent("<stock_reorder>") == "stock_reorder"
+
+    def test_quotes_around_a_name_are_forgiven_too(self):
+        from restaurant_ai.assistant import find_agent
+
+        assert find_agent('"Rain"') == "stock_reorder"
+        assert find_agent("'rain'") == "stock_reorder"
+
+    def test_a_genuinely_unknown_name_is_still_unknown(self):
+        """Forgiving punctuation must not become guessing at names."""
+        from restaurant_ai.assistant import find_agent
+
+        assert find_agent("<gordon>") is None
+        assert find_agent("<>") is None

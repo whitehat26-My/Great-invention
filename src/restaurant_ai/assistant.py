@@ -252,7 +252,10 @@ def find_agent(text: str) -> str | None:
     """
     from restaurant_ai.kernel.registry import all_agents
 
-    wanted = (text or "").strip().lower().replace("-", "_").replace(" ", "_")
+    # Docs write `/run <name>`, and people paste it exactly, brackets and all.
+    # Refusing "<Irma>" for a name we plainly have is pedantry, not precision.
+    wanted = (text or "").strip().strip("<>[]{}\"'").strip()
+    wanted = wanted.lower().replace("-", "_").replace(" ", "_")
     if not wanted:
         return None
     for name, spec in all_agents().items():

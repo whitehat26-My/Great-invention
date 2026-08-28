@@ -187,3 +187,30 @@ def remove_startup_script(folder: Path) -> bool:
         script.unlink()
         return True
     return False
+
+
+def migrate_database() -> tuple[bool, str]:
+    """Bring the schema up to date, the way compose's `migrate` service does.
+
+    The laptop path had no equivalent, so a fresh machine started four
+    processes against an empty database — and the owner met it as a psycopg
+    UndefinedTable dumped into their Telegram chat. Idempotent: on an
+    up-to-date database this is a no-op that costs a second.
+    """
+    from alembic import command
+    from alembic.config import Config
+
+    root = compose_dir() or Path.cwd()
+    ini = root / "alembic.ini"
+    if not ini.exists():
+        return False, f"No alembic.ini in {root} — run this from the project folder."
+
+    try:
+        config = Config(str(ini))
+        config.set_main_option("script_location", str(root / "migrations"))
+        command.upgrade(config, "head")
+    except Exception as exc:
+        from restaurant_ai.faults import short_fault
+
+        return False, f"Could not apply migrations: {short_fault(exc)}"
+    return True, "Schema is up to date."

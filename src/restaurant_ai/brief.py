@@ -45,6 +45,7 @@ from restaurant_ai.db.models import (
     SocialPost,
     TicketStatus,
 )
+from restaurant_ai.faults import short_fault
 from restaurant_ai.kernel.registry import all_agents
 from restaurant_ai.kernel.spec import ToolContext
 from restaurant_ai.logging_setup import get_logger
@@ -65,8 +66,10 @@ def _section(brief: Brief, name: str, build: Callable[[], list[str]]) -> None:
     try:
         brief.sections[name] = build()
     except Exception as exc:  # the other five sections still matter at midnight
+        # The log gets the whole truth; the owner gets a sentence. A phone
+        # bubble full of SELECT columns and a caret teaches nobody anything.
         log.warning("brief section failed", section=name, error=str(exc))
-        brief.sections[name] = [f"unavailable ({type(exc).__name__}: {exc})"]
+        brief.sections[name] = [f"unavailable — {short_fault(exc)}"]
 
 
 def _perceive(session: Session, agent_name: str, business_date: date) -> dict[str, Any]:
