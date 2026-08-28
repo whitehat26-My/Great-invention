@@ -53,6 +53,11 @@ docker compose ps       # all services 'running', migrate 'exited (0)'
 host does not start five processes against an empty schema and report the
 resulting crashes as five unrelated faults.
 
+A missing `.env` is not fatal — every setting has a working default, and compose
+treats the file as optional — but without one the platform runs in simulation
+(no Telegram, no model), so the `.env` step is where it becomes *your*
+restaurant.
+
 Everything long-running carries `restart: unless-stopped`. This is unattended
 kitchen equipment: nobody is watching at 03:00, and a process that dies and
 stays dead looks exactly like one working quietly.
@@ -204,13 +209,21 @@ Three honest caveats, because none of them are in the marketing:
 
 Once the instance exists (Ubuntu 22.04+, "Ampere" shape, 4 OCPU / 24 GB):
 
+> **These commands run on the server, in its Ubuntu terminal** — connect with
+> `ssh ubuntu@<the instance's IP>` first. They are Linux commands; pasted into
+> PowerShell on your own laptop they fail on the first `&&` (and `sudo` is not
+> a Windows thing). On your laptop, use `restaurant-ai up` instead.
+
 ```bash
-sudo apt update && sudo apt install -y docker.io docker-compose-v2 git
-sudo usermod -aG docker $USER && newgrp docker
+sudo apt update
+sudo apt install -y docker.io docker-compose-v2 git
+sudo usermod -aG docker $USER
+newgrp docker
 
 git clone https://github.com/whitehat26-My/Great-invention.git
 cd Great-invention
-cp .env.example .env && nano .env      # the values listed above
+cp .env.example .env
+nano .env                              # the values listed above
 docker compose up -d --build
 docker compose exec api restaurant-ai doctor
 ```

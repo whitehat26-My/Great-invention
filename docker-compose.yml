@@ -44,7 +44,7 @@ services:
     build: .
     command: alembic upgrade head
     restart: "no"
-    env_file: [.env]
+    env_file: [{path: .env, required: false}]
     environment: &backend_env
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
@@ -57,7 +57,7 @@ services:
     build: .
     command: uvicorn restaurant_ai.api.main:app --host 0.0.0.0 --port 8000
     restart: unless-stopped
-    env_file: [.env]
+    env_file: [{path: .env, required: false}]
     environment: *backend_env
     ports: ["${API_PORT:-8000}:8000"]
     depends_on:
@@ -69,7 +69,7 @@ services:
     build: .
     command: celery -A restaurant_ai.worker.celery_app:celery_app worker -l info
     restart: unless-stopped
-    env_file: [.env]
+    env_file: [{path: .env, required: false}]
     environment: *backend_env
     depends_on:
       postgres: {condition: service_healthy}
@@ -80,7 +80,7 @@ services:
     build: .
     command: celery -A restaurant_ai.worker.celery_app:celery_app beat -l info
     restart: unless-stopped
-    env_file: [.env]
+    env_file: [{path: .env, required: false}]
     environment: *backend_env
     depends_on:
       postgres: {condition: service_healthy}
@@ -94,7 +94,7 @@ services:
     build: .
     command: restaurant-ai telegram-listen
     restart: unless-stopped
-    env_file: [.env]
+    env_file: [{path: .env, required: false}]
     environment: *backend_env
     depends_on:
       postgres: {condition: service_healthy}
