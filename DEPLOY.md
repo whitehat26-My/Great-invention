@@ -129,6 +129,52 @@ git pull && docker compose up -d --build
 
 `migrate` runs again on the way up, so schema changes apply themselves.
 
+## On the machine in front of you: `restaurant-ai up`
+
+Docker Compose is the right answer on a server. On the machine people actually
+have — a Windows laptop, an old desktop behind the till — it is four terminals
+kept open by hand, and the restaurant is only as alive as the most forgettable
+of them. The forgettable one is always the listener, and a closed listener
+window is a deaf bot with no error anywhere.
+
+```powershell
+restaurant-ai up
+```
+
+One window runs the lot: listener, beat, worker, API. One Ctrl-C stops the lot,
+process tree and all — a Celery worker's forked pool goes down with the worker,
+never orphaned. A child that dies at 03:00 is restarted with backoff, because
+nobody is there to do it by hand; a child that dies instantly every time is
+reported and given up on, because restarting a bad config forever is not
+resilience. It refuses to start at all if Postgres is not reachable, with the
+command that fixes it, rather than filling the screen with five processes'
+tracebacks that all mean the same thing.
+
+Postgres and Redis still need to exist first — `make up` on Linux/macOS, or on
+Windows, Docker Desktop running just the data services:
+
+```powershell
+docker compose up -d postgres redis
+restaurant-ai up
+```
+
+### Starting it with Windows
+
+So a reboot does not mean a deaf bot, have Task Scheduler open that window at
+logon (one line, run in PowerShell from the project folder):
+
+```powershell
+schtasks /create /tn "The Great Invention" /sc onlogon `
+  /tr "cmd /k cd /d $PWD && .venv\Scripts\restaurant-ai.exe up"
+```
+
+Then stop the laptop sleeping with the lid open: Settings → System → Power →
+"When plugged in, put my device to sleep" → **Never**. A sleeping laptop is the
+restaurant's brain off, however healthy every process was when the lid dimmed.
+
+This is the honest budget option, and its honest limits: the bot is only awake
+while that machine is on and on wifi. For always-on, the sections below.
+
 ## The most powerful free host
 
 **Oracle Cloud Always Free** gives you, free and not as a trial: 4 ARM cores and
