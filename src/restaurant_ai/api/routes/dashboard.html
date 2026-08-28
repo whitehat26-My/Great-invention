@@ -58,6 +58,9 @@
             box-shadow: 0 0 0 0 rgba(25,158,112,.5); animation: pulse 2.4s ease-out infinite; }
   @keyframes pulse { 70% { box-shadow: 0 0 0 9px rgba(25,158,112,0); } }
   .stamp { color: var(--ink-3); font-size: 12px; margin-left: auto; font-variant-numeric: tabular-nums; }
+  .nav { color: var(--ink-3); font-size: 12px; text-decoration: none;
+         border: 1px solid var(--edge); padding: 4px 12px; border-radius: 999px; }
+  .nav:hover { color: var(--ink-2); border-color: var(--baseline); }
 
   .grid { display: grid; gap: 14px; }
   .kpis { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin: 18px 0 14px; }
@@ -139,6 +142,7 @@
   <header>
     <h1 id="name">Operations</h1>
     <span class="live"><i></i>Live</span>
+    <a class="nav" id="map-link" href="#">system map</a>
     <span class="stamp" id="stamp">connecting…</span>
   </header>
   <div id="err" role="alert"></div>
@@ -184,6 +188,7 @@
 /* Everything dynamic lands via textContent — summaries and titles are data. */
 const KEY = new URLSearchParams(location.search).get("key") || "";
 const $ = (id) => document.getElementById(id);
+$("map-link").href = "/dashboard/map?key=" + encodeURIComponent(KEY);
 const el = (tag, cls) => { const n = document.createElement(tag); if (cls) n.className = cls; return n; };
 const fmt = (v, d = 0) => Number(v).toLocaleString("en-MY", { minimumFractionDigits: d, maximumFractionDigits: d });
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
