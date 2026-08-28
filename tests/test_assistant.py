@@ -234,11 +234,18 @@ class TestRoutingAnInstruction:
         assert intent.kind == "unclear"
         assert "gordon_ramsay" in intent.reason
 
-    def test_an_unparseable_verdict_is_unclear_not_a_guess(self, db, monkeypatch):
+    def test_an_unparseable_verdict_answers_rather_than_refusing(self, db, monkeypatch):
+        """Changed deliberately: this used to refuse, and refusing was wrong.
+
+        The two mistakes are not symmetric. Answering an instruction costs a
+        reply naming whose job it is, which is useful. Running an agent nobody
+        asked for is not recoverable by reading. So the safe guess is the one
+        that only ever reads.
+        """
         self._model(monkeypatch, "I think maybe you want to reorder something?")
         from restaurant_ai.assistant import route
 
-        assert route("hmm").kind == "unclear"
+        assert route("hmm").kind == "question"
 
     def test_a_model_that_fails_routes_to_unclear(self, db, monkeypatch):
         """Rate-limited or unreachable must not become a coin-flip."""
@@ -428,3 +435,73 @@ class TestNamesPeopleActuallyType:
 
         assert find_agent("<gordon>") is None
         assert find_agent("<>") is None
+
+
+class TestTheVerdictAsModelsActuallyWriteIt:
+    """The contract asks for one bare word. Models answer it in markdown."""
+
+    def _model(self, monkeypatch, verdict: str):
+        class Recorder:
+            def invoke(self, messages):
+                class Response:
+                    content = verdict
+
+                return Response()
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
+
+    @pytest.mark.parametrize(
+        "dressed",
+        [
+            "**QUESTION**",
+            "`QUESTION`",
+            "QUESTION.",
+            "\n\nQUESTION",
+            "Answer: QUESTION",
+            "> QUESTION",
+            '"QUESTION"',
+        ],
+    )
+    def test_a_question_is_recognised_however_it_is_dressed(self, db, monkeypatch, dressed):
+        from restaurant_ai.assistant import route
+
+        self._model(monkeypatch, dressed)
+        assert route("how much stock?").kind == "question"
+
+    @pytest.mark.parametrize("dressed", ["**RUN stock_reorder**", "Answer: RUN rain", "`RUN Rain`"])
+    def test_an_instruction_is_too(self, db, monkeypatch, dressed):
+        from restaurant_ai.assistant import route
+
+        self._model(monkeypatch, dressed)
+        intent = route("restock")
+        assert intent.kind == "run"
+        assert intent.agent == "stock_reorder"
+
+    def test_an_unreadable_verdict_answers_rather_than_refusing(self, db, monkeypatch):
+        """The two mistakes are not symmetric.
+
+        Treating an instruction as a question costs a reply explaining whose
+        job it is. Treating a question as an instruction runs an agent nobody
+        asked for. So an unreadable verdict answers.
+        """
+        from restaurant_ai.assistant import route
+
+        self._model(monkeypatch, "I think the owner is asking about stock levels")
+        assert route("how are we doing?").kind == "question"
+
+    def test_the_models_own_unclear_still_asks(self, db, monkeypatch):
+        """Its judgement that it cannot tell is worth respecting."""
+        from restaurant_ai.assistant import route
+
+        self._model(monkeypatch, "UNCLEAR")
+        intent = route("do the thing")
+        assert intent.kind == "unclear"
+        assert "question or a job" in intent.reason
+
+    def test_run_naming_a_stranger_is_still_refused(self, db, monkeypatch):
+        """Forgiving formatting must not become forgiving about which agent."""
+        from restaurant_ai.assistant import route
+
+        self._model(monkeypatch, "**RUN gordon_ramsay**")
+        assert route("shout").kind == "unclear"

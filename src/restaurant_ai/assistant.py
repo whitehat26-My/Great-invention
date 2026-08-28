@@ -296,6 +296,25 @@ Rules:
 - Answer UNCLEAR for anything that is not about running this restaurant."""
 
 
+def _first_meaningful_line(text: str) -> str:
+    """The verdict, past whatever the model dressed it in.
+
+    The contract asks for one bare word and models answer it in markdown:
+    ``**QUESTION**``, a fenced block, a leading blank line from a stripped
+    thinking block. Matching on the raw first line failed all three, and a
+    formatting difference is not a reason to refuse the owner an answer.
+    """
+    for line in text.splitlines():
+        cleaned = line.strip().strip("`*_#>-—– \t").strip("\"'")
+        # "Answer: RUN rain" and "Verdict — QUESTION" both happen.
+        for lead in ("answer:", "verdict:", "intent:", "classification:"):
+            if cleaned.lower().startswith(lead):
+                cleaned = cleaned[len(lead) :].strip()
+        if cleaned:
+            return cleaned
+    return ""
+
+
 def route(instruction: str) -> Intent:
     """Question, instruction, or neither — decided before anything happens.
 
@@ -328,18 +347,34 @@ def route(instruction: str) -> Intent:
                 HumanMessage(content=text),
             ]
         )
-        verdict = _message_text(response).strip().splitlines()[0].strip()
+        verdict = _first_meaningful_line(_message_text(response))
     except Exception as exc:
         log.warning("routing failed", error=str(exc))
         return Intent(kind="unclear", reason=explain_model_failure(exc))
 
-    if verdict.upper().startswith("QUESTION"):
+    upper = verdict.upper()
+    if upper.startswith("QUESTION"):
         return Intent(kind="question")
-    if verdict.upper().startswith("RUN"):
+    if upper.startswith("RUN"):
         named = find_agent(verdict.split(maxsplit=1)[1] if " " in verdict else "")
         if named:
             return Intent(kind="run", agent=named)
         # It answered RUN and then named something that is not an agent. That is
         # a misroute, and running the wrong agent is worse than asking.
         return Intent(kind="unclear", reason=f"I could not match “{verdict}” to an agent.")
-    return Intent(kind="unclear", reason="I could not tell whether that was a question or a job.")
+    if upper.startswith("UNCLEAR"):
+        # The model's own judgement that it cannot tell. Asking is right.
+        return Intent(
+            kind="unclear", reason="I could not tell whether that was a question or a job."
+        )
+
+    # It said something we do not recognise at all. Answering is the safe guess
+    # and refusing is not: the two mistakes are not symmetric. Treating an
+    # instruction as a question costs a reply explaining whose job it is —
+    # useful in itself. Treating a question as an instruction runs an agent
+    # nobody asked for. So an unreadable verdict answers, and says so in the log
+    # rather than at the owner, who did nothing wrong.
+    log.warning(
+        "router said something unrecognised; answering as a question", verdict=verdict[:120]
+    )
+    return Intent(kind="question")
