@@ -568,6 +568,47 @@ with the error. Silence is never the answer to anything, because silence reads
 exactly like success: if handling an update fails anywhere, the failure is sent
 into the chat rather than only into the log.
 
+### When nothing happens
+
+Silence from the bot is the one failure that tells you nothing: a working
+restaurant with a quiet night and a dead listener look identical from a phone.
+
+```
+restaurant-ai doctor
+```
+
+checks every link in the chain and changes nothing, so it is safe to run at any
+time — the database, the model, the token, the chat id, whether a webhook is
+blocking polling, and, the one that explains most quiet bots, whether anything
+is actually reading the chat.
+
+```
+The Great Invention — what is and is not working
+
+  ok    database        reachable, 41 ingredients tracked
+  ok    language model  google — gemini-3.5-flash
+  ok    telegram bot    @Keanu007_Bot (Keanu)
+  ok    webhook         none — long polling is available
+  ok    approvals chat  Sharif (private, id 9988...)
+  FAIL  listener        NOT RUNNING — nothing is reading the chat, and 4
+                        message(s) are waiting unanswered
+
+  listener: Start it with `restaurant-ai telegram-listen`, and leave it
+  running — close that terminal and the bot goes deaf again.
+```
+
+The listener check works without any bookkeeping of its own: Telegram allows
+exactly one `getUpdates` at a time and answers a second with 409 Conflict, so
+the refusal *is* the proof that something is polling. An answer instead of a
+conflict means nobody is, and whatever it hands back is the backlog of messages
+that went unanswered. It is called without an offset, so it consumes nothing —
+a real listener still sees every one of them.
+
+Two silent failures it names that nothing else does: a `TELEGRAM_CHAT_ID` that
+does not resolve (every message is then ignored on purpose, and ignoring is
+supposed to look like this), and a network that blocks `api.telegram.org`, which
+is indistinguishable from a bad token until something says which.
+
 ### The desk itself still cannot act
 
 Answering is **read-only by construction, not by instruction**. The model that
