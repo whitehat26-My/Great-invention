@@ -659,3 +659,17 @@ def _wrap(text: str, width: int) -> list[str]:
 
 if __name__ == "__main__":  # pragma: no cover
     app()
+
+
+@app.command("ask")
+def ask(
+    question: str = typer.Argument(..., help="A question about the restaurant."),
+) -> None:
+    """Ask the restaurant a question — the same desk the Telegram chat uses.
+
+    Read-only: this path binds no tools, so it can answer about the restaurant
+    but never change it.
+    """
+    from restaurant_ai.assistant import answer
+
+    typer.echo(answer(question))
