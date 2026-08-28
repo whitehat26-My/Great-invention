@@ -96,6 +96,12 @@ class Settings(BaseSettings):
     # This platform fires several agents together on the morning and end-of-day
     # schedules, so that is not a rare case.
     llm_max_retries: int = 10
+    # A nightly close should wait out a rate limit rather than fail the books,
+    # which is what the patient budget above is for. A person watching a chat
+    # will not wait minutes for a reply, and cannot tell a slow answer from a
+    # dead bot, so anything someone is waiting on gets these instead.
+    llm_interactive_max_retries: int = 1
+    llm_interactive_timeout: int = 25
     agent_max_tool_iterations: int = 6
 
     @field_validator("llm_temperature", "google_reasoning_effort", mode="before")
