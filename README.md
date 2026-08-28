@@ -651,6 +651,47 @@ installed copy*, and a pull changes nothing until you `pip install -e .` again.
 The version string never moves between releases, so the commit is the part that
 tells you whether this is today's code.
 
+### Logging a day's takings without a POS
+
+A restaurant that has traded for twenty years without a system has no export to
+import from, and waiting for one keeps the platform a demonstration for however
+long that takes. `/sold` is the way in that needs nothing but the phone already
+receiving the approval cards.
+
+```
+you   /sold 20 nasi lemak biasa, 35 teh tarik, 40 roti kosong, 90 covers
+
+bot   Recording today as:
+        20 × Nasi Lemak Biasa — RM 120.00
+        35 × Teh Tarik — RM 87.50
+        40 × Roti Kosong — RM 72.00
+        90 covers
+        Total: RM 279.50
+      Write it?
+      [ Yes, record it ]   [ No ]
+```
+
+**A name is matched, never guessed.** This menu has eight Nasi Lemaks, so
+`12 nasi lemak` is refused with all eight listed rather than resolved to the
+nearest — closest-match is a coin-flip that puts revenue against a dish that did
+not sell. A dish with no number comes back as "how many?" rather than assumed to
+be one, because one is a guess about money. Nothing is written unless every line
+resolves: a partial write leaves the owner unsure which half went in, and
+re-sending the message would double the half that did.
+
+**Nothing is written before it has been read back in ringgit.** A typo caught on
+screen costs a re-type; a typo written into the books costs an evening finding
+it.
+
+What it records are ordinary orders — no `H` prefix — so they count as real
+trading everywhere the demo data is excluded, deduct stock, and feed margin
+exactly as a POS-fed order would. Log one and the brief's caveat changes by
+itself:
+
+```
+(2636 of these orders are demo data from `seed`, 1 are real — the totals mix both)
+```
+
 ### Whose numbers are these?
 
 `restaurant-ai seed` invents a fortnight of trading — a couple of thousand
