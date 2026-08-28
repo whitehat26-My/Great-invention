@@ -183,3 +183,44 @@ class TestTheCli:
             ),
         )
         CliRunner().invoke(app, ["doctor"])
+
+
+class TestKnowingWhatIsRunning:
+    """ "No such command" is almost never a missing command."""
+
+    def test_version_names_the_code_it_actually_loaded(self):
+        from restaurant_ai.cli import app
+
+        result = CliRunner().invoke(app, ["--version"])
+        assert result.exit_code == 0
+        assert "restaurant-ai 0.1.0" in result.output
+        # The path is the whole point: a pulled checkout and a stale install
+        # differ here and nowhere else.
+        assert "running from" in result.output
+        assert "restaurant_ai" in result.output
+
+    def test_it_reports_the_commit_so_today_s_code_is_recognisable(self):
+        """The version string never moves between releases. The commit does."""
+        from restaurant_ai.cli import app
+
+        result = CliRunner().invoke(app, ["--version"])
+        assert "commit" in result.output
+
+    def test_an_installed_copy_says_a_pull_will_not_help(self, monkeypatch, tmp_path):
+        """The actual failure: checkout pulled, install not — so a pull is a no-op."""
+        import subprocess
+
+        from restaurant_ai import cli
+
+        monkeypatch.setattr(cli, "__file__", str(tmp_path / "cli.py"))
+        real = subprocess.run
+
+        def not_a_repo(*args, **kwargs):
+            if args and args[0][:2] == ["git", "rev-parse"]:
+                return subprocess.CompletedProcess(args[0], 128, "", "not a git repository")
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(subprocess, "run", not_a_repo)
+        described = cli._describe_install()
+        assert "installed copy, not a checkout" in described
+        assert "pip install -e ." in described
