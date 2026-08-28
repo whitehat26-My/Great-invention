@@ -275,3 +275,49 @@ class TestAMenuBeforeItsRecipes:
         assert summary.costings
         assert not summary.uncosted
         assert all(c["plate_cost"] > 0 for c in summary.costings)
+
+
+class TestAFileThatIsNotWhereYouAre:
+    """A workbook downloaded from a chat is in Downloads, and the person is
+    standing in the project folder wondering why a file they can see on screen
+    "does not exist"."""
+
+    def test_it_names_the_folder_it_searched(self, db, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        from restaurant_ai.cli import app
+
+        monkeypatch.chdir(tmp_path)
+        result = CliRunner().invoke(app, ["import-menu", "menu.xlsx"])
+
+        assert result.exit_code == 1
+        # "No such file or directory" omits the one fact that resolves it.
+        assert str(tmp_path) in result.output
+
+    def test_a_spreadsheet_that_is_here_is_offered(self, db, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        from restaurant_ai.cli import app
+
+        (tmp_path / "actual-menu.xlsx").write_bytes(b"not really a workbook")
+        monkeypatch.chdir(tmp_path)
+        result = CliRunner().invoke(app, ["import-menu", "menu.xlsx"])
+
+        assert "actual-menu.xlsx" in result.output
+
+    def test_finding_it_in_downloads_hands_over_the_whole_command(self, db, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        from restaurant_ai.cli import app
+
+        downloads = tmp_path / "home" / "Downloads"
+        downloads.mkdir(parents=True)
+        (downloads / "menu.xlsx").write_bytes(b"not really a workbook")
+        monkeypatch.setattr("pathlib.Path.home", classmethod(lambda cls: tmp_path / "home"))
+        monkeypatch.chdir(tmp_path)
+
+        result = CliRunner().invoke(app, ["import-menu", "menu.xlsx"])
+        assert "Found it in your Downloads" in result.output
+        # Not a hint — the command, ready to paste.
+        assert "restaurant-ai import-menu" in result.output
+        assert str(downloads / "menu.xlsx") in result.output

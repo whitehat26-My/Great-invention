@@ -212,7 +212,25 @@ def import_menu(
         raise typer.Exit(code=1) from exc
     except FileNotFoundError as exc:
         session.rollback()
-        typer.echo(f"\n  {exc}", err=True)
+        # "No such file or directory" leaves out the one fact that resolves it:
+        # which directory. A workbook downloaded from a chat is in Downloads,
+        # and the person is standing in the project folder wondering why a file
+        # they can see on screen does not exist.
+        here = Path.cwd()
+        typer.echo(f"\n  No workbook called {file!r} in {here}", err=True)
+        nearby = sorted(p.name for p in here.glob("*.xlsx"))
+        if nearby:
+            typer.echo(f"  Spreadsheets here: {', '.join(nearby)}", err=True)
+        downloads = Path.home() / "Downloads" / Path(file).name
+        if downloads.exists():
+            typer.echo("\n  Found it in your Downloads. Use the full path:", err=True)
+            typer.echo(f'  restaurant-ai import-menu "{downloads}" --allow-uncosted', err=True)
+        else:
+            typer.echo(
+                "  Give the full path to it, or `restaurant-ai menu-template menu.xlsx` "
+                "for a blank one.",
+                err=True,
+            )
         raise typer.Exit(code=1) from exc
     else:
         if dry_run:
