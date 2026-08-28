@@ -187,9 +187,13 @@ def handle_message(message: dict[str, Any]) -> str | None:
 
 def _instruction_or_question(chat_id: Any, text: str) -> str:
     """Work out whether the owner asked something or told me to do something."""
-    from restaurant_ai.assistant import Intent, answer, route
+    from restaurant_ai.assistant import Intent, answer, greet, route
 
     intent: Intent = route(text)
+
+    if intent.kind == "greeting":
+        api("sendMessage", chat_id=chat_id, text=greet())
+        return "greeted"
 
     if intent.kind == "run" and intent.agent:
         _propose_run(chat_id, intent.agent, text)

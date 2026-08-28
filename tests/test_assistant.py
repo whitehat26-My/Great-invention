@@ -505,3 +505,52 @@ class TestTheVerdictAsModelsActuallyWriteIt:
 
         self._model(monkeypatch, "**RUN gordon_ramsay**")
         assert route("shout").kind == "unclear"
+
+
+class TestGreetingsCostNothing:
+    """Twenty model calls a day, and "hey" would spend two of them."""
+
+    def test_a_greeting_never_reaches_the_model(self, db, monkeypatch):
+        from restaurant_ai.assistant import route
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr(
+            "restaurant_ai.kernel.llm.get_model",
+            lambda tier, **kw: pytest.fail("a greeting must not cost a model call"),
+        )
+        assert route("hey").kind == "greeting"
+
+    @pytest.mark.parametrize(
+        "said", ["hi", "Hello!", "  hey  ", "thanks", "terima kasih", "ok", "good morning"]
+    )
+    def test_the_ones_people_actually_send(self, db, said):
+        from restaurant_ai.assistant import is_pleasantry
+
+        assert is_pleasantry(said)
+
+    @pytest.mark.parametrize(
+        "said",
+        ["how much stock?", "hey what are the numbers", "restock the kitchen", "okay run rain"],
+    )
+    def test_a_real_message_is_not_mistaken_for_one(self, db, said):
+        """ "okay run rain" is an instruction that begins with a pleasantry."""
+        from restaurant_ai.assistant import is_pleasantry
+
+        assert not is_pleasantry(said)
+
+    def test_the_greeting_says_what_can_be_done(self, db):
+        from restaurant_ai.assistant import greet
+
+        said = greet()
+        assert "/agents" in said and "/help" in said
+
+
+class TestATimeoutOnAFreeTierIsUsuallyTheQuota:
+    def test_it_names_the_likely_cause_rather_than_blaming_the_network(self):
+        from restaurant_ai.assistant import explain_model_failure
+
+        said = explain_model_failure(TimeoutError("deadline exceeded"))
+        assert "quota is spent" in said
+        assert "doctor" in said
+        # And what still works without any model at all.
+        assert "/run" in said

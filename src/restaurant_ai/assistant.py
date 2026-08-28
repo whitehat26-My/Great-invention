@@ -188,9 +188,16 @@ def explain_model_failure(exc: Exception) -> str:
             "worth immediately."
         )
     if "timeout" in lowered or "deadline" in lowered or "timed out" in lowered:
+        # Reported as slowness, and usually is not. A spent free tier answers
+        # 429 with "retry in 45s", which outlasts any deadline a person waiting
+        # on a chat would accept — so the timeout is the quota in disguise, and
+        # saying only "it was slow" sends the owner to check their wifi.
         return (
-            "The language model did not answer in time. Ask me again, or use "
-            "/run <name> which does not need it."
+            "The language model did not answer in time. On the free tier that "
+            "usually means the day's quota is spent — it asks for a 45-second "
+            "wait, which is longer than I hold on for.\n\n"
+            "`restaurant-ai doctor` says which it is. /run <name>, /brief, "
+            "/pending and /agents need no model at all."
         )
     if "api key" in lowered or "unauthenticated" in lowered or "permission" in lowered:
         return (
@@ -233,7 +240,7 @@ def _offline_answer(question: str, snapshot: dict[str, Any]) -> str:
 class Intent:
     """What the owner wants, as far as the desk can tell.
 
-    ``kind`` is one of ``question``, ``run`` or ``unclear``. Uncertainty is a
+    ``kind`` is one of ``question``, ``run``, ``greeting`` or ``unclear``. Uncertainty is a
     first-class answer: a desk that guesses between two agents is worse than one
     that asks, because the owner finds out which it picked only afterwards.
     """
@@ -315,6 +322,51 @@ def _first_meaningful_line(text: str) -> str:
     return ""
 
 
+# Said to a bot by everyone, meaning nothing, and costing two model calls out of
+# a free tier's twenty a day if it goes to the router and then the desk.
+_PLEASANTRIES = {
+    "hi",
+    "hey",
+    "hello",
+    "yo",
+    "helo",
+    "hai",
+    "halo",
+    "thanks",
+    "thank you",
+    "ty",
+    "terima kasih",
+    "tq",
+    "ok",
+    "okay",
+    "oki",
+    "sip",
+    "good",
+    "nice",
+    "cool",
+    "morning",
+    "good morning",
+    "good night",
+    "night",
+    "gn",
+}
+
+
+def is_pleasantry(text: str) -> bool:
+    """Whether this is a greeting rather than a question about the restaurant."""
+    cleaned = (text or "").strip().strip("!.?,").lower()
+    return cleaned in _PLEASANTRIES
+
+
+def greet() -> str:
+    """A reply that costs nothing and still says what can be done."""
+    return (
+        "I am here. Ask me about the restaurant — stock, covers, the roster — "
+        "or tell me what to do.\n\n"
+        "/agents lists who works here. /help shows everything."
+    )
+
+
 def route(instruction: str) -> Intent:
     """Question, instruction, or neither — decided before anything happens.
 
@@ -328,6 +380,8 @@ def route(instruction: str) -> Intent:
     text = (instruction or "").strip()
     if not text:
         return Intent(kind="unclear", reason="Nothing was said.")
+    if is_pleasantry(text):
+        return Intent(kind="greeting")
 
     if llm.is_fake():
         # Without a model there is no classifier. Naming an agent still works,

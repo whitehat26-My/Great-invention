@@ -670,3 +670,16 @@ class TestLoggingWhatSold:
     def test_sold_with_nothing_after_it_shows_the_shape(self, real_menu, telegram):
         listener.handle_update(say("/sold"))
         assert "nasi lemak" in [p for m, p in telegram if m == "sendMessage"][0]["text"]
+
+
+class TestGreetingsAreAnsweredFree:
+    def test_hey_gets_a_reply_without_a_model(self, db, telegram, monkeypatch):
+        monkeypatch.setattr(
+            "restaurant_ai.assistant.answer",
+            lambda q, session=None: pytest.fail("a greeting must not reach the desk"),
+        )
+        described = listener.handle_update(say("hey"))
+
+        assert described == "greeted"
+        text = [p for m, p in telegram if m == "sendMessage"][0]["text"]
+        assert "/agents" in text
