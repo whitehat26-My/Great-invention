@@ -462,6 +462,23 @@ other five at midnight.
 
 ---
 
+## The live dashboard
+
+For a screen rather than a phone: `GET /dashboard?key=<APPROVAL_API_KEY>` on the
+API serves a self-contained dark operations view — KPI tiles with sparklines and
+count-up deltas, a 14-day revenue chart and a prime-vs-labour chart with the 60%
+target hairline (crosshair tooltips on both), the departments, every agent's
+status, and a NEEDS YOU panel. It refreshes itself every 30 seconds.
+
+No CDN, no build step — one HTML file, because it has to work on a laptop in a
+restaurant with flaky wifi. Same key, same fail-closed posture as the rest of
+the approval surface, and the page itself carries no data: everything arrives
+via the authenticated fetch, so a leaked URL without the key shows an empty
+shell. Chart colors are the validated dark-mode palette; animations respect
+`prefers-reduced-motion`; a data table backs every chart.
+
+---
+
 ## The operating rhythm
 
 Celery beat, in the restaurant's own timezone (a `23:30` that fires at `07:30`

@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operations</title>
+<style>
+  /* A deliberate single dark look. Chart colors are the validated dark-mode
+     palette (see dataviz reference); text wears ink tokens, never series color. */
+  :root {
+    color-scheme: dark;
+    --page:        #0d0d0d;
+    --surface:     #1a1a19;   /* the chart surface the palette was validated on */
+    --panel:       rgba(26, 26, 25, 0.82);
+    --edge:        #2c2c2a;
+    --baseline:    #383835;
+    --ink:         #ffffff;
+    --ink-2:       #c3c2b7;
+    --ink-3:       #898781;
+    --s1:          #3987e5;   /* categorical slot 1 (dark) */
+    --s2:          #d95926;   /* slot 2 */
+    --s3:          #199e70;   /* slot 3 */
+    --good:        #0ca30c;
+    --warning:     #fab219;
+    --serious:     #ec835a;
+    --critical:    #d03b3b;
+    --glow:        rgba(57, 135, 229, 0.35);
+  }
+  * { margin: 0; box-sizing: border-box; }
+  body {
+    background: var(--page);
+    color: var(--ink);
+    font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+    min-height: 100vh;
+    padding: 24px clamp(16px, 4vw, 48px) 64px;
+  }
+  /* The "digital" backdrop: a faint drifting grid. Decoration only — it sits
+     behind everything and switches off with reduced motion. */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    /* repeating-linear-gradient: the stacked 1px-line form rasterises as
+       solid blocks at the mask edge in some Chromium builds */
+    background-image:
+      repeating-linear-gradient(0deg, transparent, transparent 43px, var(--edge) 43px, var(--edge) 44px),
+      repeating-linear-gradient(90deg, transparent, transparent 43px, var(--edge) 43px, var(--edge) 44px);
+    opacity: 0.16;
+    mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, #000 0%, transparent 78%);
+    animation: drift 90s linear infinite;
+  }
+  @keyframes drift { to { background-position: 44px 44px; } }
+  main { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; }
+
+  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
+  h1 { font-size: 20px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; }
+  .live { display: inline-flex; align-items: center; gap: 7px; color: var(--ink-3); font-size: 12px;
+          letter-spacing: 0.1em; text-transform: uppercase; }
+  .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--s3);
+            box-shadow: 0 0 0 0 rgba(25,158,112,.5); animation: pulse 2.4s ease-out infinite; }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 9px rgba(25,158,112,0); } }
+  .stamp { color: var(--ink-3); font-size: 12px; margin-left: auto; font-variant-numeric: tabular-nums; }
+
+  .grid { display: grid; gap: 14px; }
+  .kpis { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin: 18px 0 14px; }
+  .cols { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 10px;
+    padding: 16px 18px; backdrop-filter: blur(6px);
+    opacity: 0; transform: translateY(10px);
+    animation: rise .5s cubic-bezier(.2,.7,.3,1) forwards;
+  }
+  .panel:nth-child(2) { animation-delay: .06s } .panel:nth-child(3) { animation-delay: .12s }
+  .panel:nth-child(4) { animation-delay: .18s } .panel:nth-child(5) { animation-delay: .24s }
+  .panel:nth-child(6) { animation-delay: .30s }
+  @keyframes rise { to { opacity: 1; transform: none; } }
+
+  .panel h2 { font-size: 11px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase;
+              color: var(--ink-3); margin-bottom: 10px; }
+  .kpi .value { font-size: 34px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.15; }
+  .kpi .unit { font-size: 13px; color: var(--ink-2); font-weight: 400; margin-left: 4px; }
+  .kpi .delta { font-size: 12px; margin-top: 2px; color: var(--ink-2); }
+  .kpi .delta .up   { color: var(--good); }
+  .kpi .delta .down { color: var(--critical); }
+  .kpi svg { display: block; margin-top: 10px; width: 100%; height: 34px; overflow: visible; }
+
+  figure { margin: 0; }
+  figure svg { display: block; width: 100%; height: auto; background: var(--surface);
+               border-radius: 6px; touch-action: none; }
+  figcaption { font-size: 12px; color: var(--ink-3); margin-top: 8px; }
+  .legend { display: flex; gap: 16px; margin: 2px 0 10px; font-size: 12px; color: var(--ink-2); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px;
+              vertical-align: -1px; }
+
+  /* One tooltip, every series; values lead. Filled by textContent only. */
+  #tip { position: fixed; z-index: 5; pointer-events: none; display: none;
+         background: #0d0d0dee; border: 1px solid var(--baseline); border-radius: 8px;
+         padding: 8px 12px; font-size: 12px; min-width: 130px; }
+  #tip .t-date { color: var(--ink-3); margin-bottom: 4px; }
+  #tip .t-row { display: flex; align-items: center; gap: 7px; }
+  #tip .t-row i { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+  #tip .t-row b { font-variant-numeric: tabular-nums; }
+  #tip .t-row span { color: var(--ink-2); }
+
+  ul { list-style: none; }
+  .lines li { padding: 3px 0; color: var(--ink-2); white-space: pre-wrap; }
+  .lines li::before { content: "▸ "; color: var(--s1); }
+
+  .needs { border-color: color-mix(in srgb, var(--warning) 45%, var(--edge)); }
+  .needs li::before { content: "⚠ "; color: var(--warning); }
+  .needs .none { color: var(--ink-2); } .needs .none::before { content: "✓ "; color: var(--good); }
+
+  .agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+  .agent { border: 1px solid var(--edge); border-radius: 8px; padding: 10px 12px; background: var(--surface); }
+  .agent b { display: block; font-size: 13px; }
+  .agent small { color: var(--ink-3); font-size: 11px; display: block; margin: 1px 0 6px; }
+  .status { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); }
+  .status i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; }
+
+  details { margin-top: 12px; }
+  summary { cursor: pointer; color: var(--ink-3); font-size: 12px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 12px;
+          font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 4px 10px; border-bottom: 1px solid var(--edge); color: var(--ink-2); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--ink-3); font-weight: 500; }
+
+  #err { display: none; margin: 16px 0; padding: 12px 16px; border: 1px solid var(--critical);
+         border-radius: 8px; color: var(--ink-2); }
+
+  @media (prefers-reduced-motion: reduce) {
+    body::before, .live i { animation: none; }
+    .panel { animation-duration: .01s; }
+    .draw { animation: none !important; stroke-dashoffset: 0 !important; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 id="name">Operations</h1>
+    <span class="live"><i></i>Live</span>
+    <span class="stamp" id="stamp">connecting…</span>
+  </header>
+  <div id="err" role="alert"></div>
+
+  <section class="grid kpis" id="kpis" aria-label="Key numbers"></section>
+
+  <section class="grid cols">
+    <div class="panel">
+      <h2>Revenue — last 14 days</h2>
+      <figure><svg id="rev" viewBox="0 0 560 210" role="img" aria-label="Revenue by day, last 14 days"></svg>
+      <figcaption>Daily net revenue. Hover for exact values.</figcaption></figure>
+    </div>
+    <div class="panel">
+      <h2>Prime cost — last 14 days</h2>
+      <div class="legend" id="pc-legend"></div>
+      <figure><svg id="pc" viewBox="0 0 560 210" role="img" aria-label="Prime cost and labour percentage by day"></svg>
+      <figcaption>Percent of revenue; hairline marks the 60% target.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="grid cols" style="margin-top:14px">
+    <div class="panel needs"><h2>Needs you</h2><ul class="lines" id="needs"></ul></div>
+    <div class="panel"><h2>Departments</h2><ul class="lines" id="depts"></ul></div>
+  </section>
+
+  <section class="panel" style="margin-top:14px">
+    <h2>Agents</h2>
+    <div class="agents" id="agents"></div>
+  </section>
+
+  <details class="panel" style="margin-top:14px">
+    <summary>Data table — last 14 days</summary>
+    <table id="tbl">
+      <thead><tr><th>Date</th><th>Revenue</th><th>Covers</th><th>Prime %</th><th>Labour %</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </details>
+</main>
+<div id="tip" role="status"></div>
+
+<script>
+"use strict";
+/* Everything dynamic lands via textContent — summaries and titles are data. */
+const KEY = new URLSearchParams(location.search).get("key") || "";
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls) => { const n = document.createElement(tag); if (cls) n.className = cls; return n; };
+const fmt = (v, d = 0) => Number(v).toLocaleString("en-MY", { minimumFractionDigits: d, maximumFractionDigits: d });
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const STATUS = {
+  completed:        { color: "var(--good)",     label: "✓ completed" },
+  awaiting_approval:{ color: "var(--warning)",  label: "⧗ awaiting you" },
+  running:          { color: "var(--s1)",       label: "… running" },
+  failed:           { color: "var(--critical)", label: "✕ failed" },
+  rejected:         { color: "var(--serious)",  label: "⊘ rejected" },
+  idle:             { color: "var(--ink-3)",    label: "– idle" },
+};
+
+async function load() {
+  let data;
+  try {
+    const res = await fetch("/dashboard/data", { headers: { "X-API-Key": KEY } });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    data = await res.json();
+  } catch (e) {
+    const err = $("err");
+    err.style.display = "block";
+    err.textContent = "Could not reach the kitchen: " + e.message + " — retrying in 30s.";
+    return;
+  }
+  $("err").style.display = "none";
+  render(data);
+}
+
+function render(d) {
+  $("name").textContent = d.restaurant;
+  $("stamp").textContent = d.business_date + " · updated " +
+    new Date(d.generated_at).toLocaleTimeString("en-MY", { hour12: false });
+
+  const h = d.history, last = h[h.length - 1] || null, prev = h[h.length - 2] || null;
+  renderKpis(last, prev, h);
+  lineChart($("rev"), h, [{ key: "revenue", name: "Revenue", color: "var(--s1)", fmt: (v) => "RM " + fmt(v, 2) }], { area: true });
+  lineChart($("pc"), h, [
+    { key: "prime_pct",  name: "Prime",  color: "var(--s1)", fmt: (v) => fmt(v, 1) + "%" },
+    { key: "labour_pct", name: "Labour", color: "var(--s2)", fmt: (v) => fmt(v, 1) + "%" },
+  ], { target: 60, unit: "%" });
+  legend($("pc-legend"), [["Prime", "var(--s1)"], ["Labour", "var(--s2)"]]);
+
+  fillList($("needs"), d.needs_you.length ? d.needs_you : null, "Nothing needs you right now.");
+  const deptLines = [];
+  for (const [name, lines] of Object.entries(d.sections)) {
+    if (name === "agents") continue;
+    deptLines.push(name.toUpperCase() + " — " + lines.join(" · "));
+  }
+  fillList($("depts"), deptLines, "no departments reporting");
+  renderAgents(d.agents, d.failures);
+  renderTable(h);
+}
+
+function renderKpis(last, prev, history) {
+  const root = $("kpis"); root.replaceChildren();
+  const defs = [
+    { label: "Net revenue", unit: "RM", get: (r) => r.revenue, digits: 2, spark: "revenue" },
+    { label: "Covers", unit: "", get: (r) => r.covers, digits: 0, spark: "covers" },
+    { label: "Prime cost", unit: "%", get: (r) => r.prime_pct, digits: 1, spark: "prime_pct", downIsGood: true },
+    { label: "Labour", unit: "%", get: (r) => r.labour_pct, digits: 1, spark: "labour_pct", downIsGood: true },
+  ];
+  for (const def of defs) {
+    const card = el("div", "panel kpi");
+    const h2 = el("h2"); h2.textContent = def.label; card.append(h2);
+    const value = el("div", "value");
+    const num = el("span");
+    num.textContent = last ? fmt(def.get(last), def.digits) : "—";
+    const unit = el("span", "unit"); unit.textContent = def.unit;
+    value.append(num, unit); card.append(value);
+
+    const delta = el("div", "delta");
+    if (last && prev) {
+      const diff = def.get(last) - def.get(prev);
+      const arrow = el("span", (diff <= 0) === !!def.downIsGood ? "up" : "down");
+      arrow.textContent = (diff >= 0 ? "▲ +" : "▼ ") + fmt(diff, def.digits);
+      delta.append(arrow, document.createTextNode(" vs yesterday"));
+    } else { delta.textContent = "no comparison yet"; }
+    card.append(delta);
+    card.append(sparkline(history.map((r) => def.get(r))));
+    root.append(card);
+    if (last && !reduced) countUp(num, def.get(last), def.digits);
+  }
+}
+
+function countUp(node, target, digits) {
+  const t0 = performance.now(), dur = 700;
+  const step = (t) => {
+    const k = Math.min(1, (t - t0) / dur), eased = 1 - Math.pow(1 - k, 3);
+    node.textContent = fmt(target * eased, digits);
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+const NS = "http://www.w3.org/2000/svg";
+const svgel = (tag, attrs) => {
+  const n = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  return n;
+};
+
+function sparkline(values) {
+  const w = 160, hgt = 34, svg = svgel("svg", { viewBox: `0 0 ${w} ${hgt}` });
+  if (values.length < 2) return svg;
+  const min = Math.min(...values), max = Math.max(...values), span = max - min || 1;
+  const pts = values.map((v, i) =>
+    [(i / (values.length - 1)) * (w - 8) + 4, hgt - 5 - ((v - min) / span) * (hgt - 10)]);
+  const dline = "M" + pts.map((p) => p.map((n) => n.toFixed(1)).join(",")).join(" L");
+  const path = svgel("path", { d: dline, fill: "none", stroke: "var(--s1)", "stroke-width": 2,
+                               "stroke-linecap": "round", "stroke-linejoin": "round", class: "draw" });
+  animateDraw(path);
+  svg.append(path);
+  const [ex, ey] = pts[pts.length - 1];
+  svg.append(svgel("circle", { cx: ex, cy: ey, r: 4, fill: "var(--s1)",
+                               stroke: "var(--surface)", "stroke-width": 2 }));
+  return svg;
+}
+
+function animateDraw(path) {
+  if (reduced) return;
+  requestAnimationFrame(() => {
+    const len = path.getTotalLength();
+    path.style.strokeDasharray = len;
+    path.style.strokeDashoffset = len;
+    path.style.transition = "stroke-dashoffset .9s cubic-bezier(.3,.6,.3,1)";
+    requestAnimationFrame(() => { path.style.strokeDashoffset = "0"; });
+  });
+}
+
+/* Line chart: 2px lines, round joins, >=8px end markers with a 2px surface
+   ring, recessive grid, ONE axis, crosshair + one tooltip listing every
+   series. Direct labels at the line ends carry identity alongside the legend. */
+function lineChart(svg, history, series, opts = {}) {
+  svg.replaceChildren();
+  const W = 560, H = 210, m = { l: 46, r: 64, t: 12, b: 24 };
+  if (!history.length) {
+    const t = svgel("text", { x: W / 2, y: H / 2, "text-anchor": "middle", fill: "var(--ink-3)", "font-size": 13 });
+    t.textContent = "no closed days yet — run a day, come back";
+    svg.append(t); return;
+  }
+  const xs = history.map((_, i) => m.l + (i / Math.max(1, history.length - 1)) * (W - m.l - m.r));
+  let lo = Infinity, hi = -Infinity;
+  for (const s of series) for (const r of history) { lo = Math.min(lo, r[s.key]); hi = Math.max(hi, r[s.key]); }
+  if (opts.target != null) { lo = Math.min(lo, opts.target); hi = Math.max(hi, opts.target); }
+  const pad = (hi - lo || 1) * 0.12; lo -= pad; hi += pad;
+  const y = (v) => H - m.b - ((v - lo) / (hi - lo)) * (H - m.t - m.b);
+
+  for (let g = 0; g < 4; g++) {  /* recessive hairline grid + axis labels */
+    const gy = m.t + (g / 3) * (H - m.t - m.b);
+    svg.append(svgel("line", { x1: m.l, x2: W - m.r, y1: gy, y2: gy, stroke: "var(--edge)", "stroke-width": 1 }));
+    const lab = svgel("text", { x: m.l - 8, y: gy + 4, "text-anchor": "end", fill: "var(--ink-3)", "font-size": 11 });
+    lab.textContent = fmt(hi - (g / 3) * (hi - lo), 0) + (opts.unit || "");
+    svg.append(lab);
+  }
+  if (opts.target != null) {
+    const ty = y(opts.target);
+    svg.append(svgel("line", { x1: m.l, x2: W - m.r, y1: ty, y2: ty, stroke: "var(--baseline)",
+                               "stroke-width": 1, "stroke-dasharray": "5 4" }));
+    const t = svgel("text", { x: W - m.r + 6, y: ty + 4, fill: "var(--ink-3)", "font-size": 11 });
+    t.textContent = "target"; svg.append(t);
+  }
+  [0, history.length - 1].forEach((i) => {   /* first & last date, muted */
+    if (i < 0) return;
+    const t = svgel("text", { x: xs[i], y: H - 6, "text-anchor": i ? "end" : "start",
+                              fill: "var(--ink-3)", "font-size": 11 });
+    t.textContent = history[i].date.slice(5); svg.append(t);
+  });
+
+  for (const s of series) {
+    const pts = history.map((r, i) => [xs[i], y(r[s.key])]);
+    if (opts.area && pts.length > 1) {
+      const darea = "M" + pts.map((p) => p.join(",")).join(" L") +
+        ` L${pts[pts.length - 1][0]},${H - m.b} L${pts[0][0]},${H - m.b} Z`;
+      svg.append(svgel("path", { d: darea, fill: s.color, opacity: 0.12 }));
+    }
+    const path = svgel("path", {
+      d: "M" + pts.map((p) => p.map((n) => n.toFixed(1)).join(",")).join(" L"),
+      fill: "none", stroke: s.color, "stroke-width": 2,
+      "stroke-linecap": "round", "stroke-linejoin": "round", class: "draw" });
+    animateDraw(path); svg.append(path);
+    const [ex, ey] = pts[pts.length - 1];
+    svg.append(svgel("circle", { cx: ex, cy: ey, r: 4, fill: s.color,
+                                 stroke: "var(--surface)", "stroke-width": 2 }));
+    const lab = svgel("text", { x: ex + 8, y: ey + 4, fill: "var(--ink-2)", "font-size": 11 });
+    lab.textContent = s.name; svg.append(lab);   /* direct label, ink not series color */
+  }
+
+  /* Crosshair finds the X; the tooltip lists every series at that X. */
+  const hair = svgel("line", { y1: m.t, y2: H - m.b, stroke: "var(--baseline)",
+                               "stroke-width": 1, visibility: "hidden" });
+  svg.append(hair);
+  const tip = $("tip");
+  svg.addEventListener("pointermove", (ev) => {
+    const box = svg.getBoundingClientRect();
+    const px = ((ev.clientX - box.left) / box.width) * W;
+    let i = 0;
+    for (let k = 1; k < xs.length; k++) if (Math.abs(xs[k] - px) < Math.abs(xs[i] - px)) i = k;
+    hair.setAttribute("x1", xs[i]); hair.setAttribute("x2", xs[i]);
+    hair.setAttribute("visibility", "visible");
+    tip.replaceChildren();
+    const dt = el("div", "t-date"); dt.textContent = history[i].date; tip.append(dt);
+    for (const s of series) {
+      const row = el("div", "t-row");
+      const box2 = el("i"); box2.style.background = s.color;
+      const val = el("b"); val.textContent = s.fmt(history[i][s.key]);
+      const name = el("span"); name.textContent = s.name;
+      row.append(box2, val, name); tip.append(row);
+    }
+    tip.style.display = "block";
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 170) + "px";
+    tip.style.top = (ev.clientY + 14) + "px";
+  });
+  svg.addEventListener("pointerleave", () => {
+    hair.setAttribute("visibility", "hidden"); tip.style.display = "none";
+  });
+}
+
+function legend(root, items) {
+  root.replaceChildren();
+  for (const [name, color] of items) {
+    const span = el("span"); const box = el("i"); box.style.background = color;
+    span.append(box, document.createTextNode(name)); root.append(span);
+  }
+}
+
+function fillList(root, lines, empty) {
+  root.replaceChildren();
+  if (!lines) { const li = el("li", "none"); li.textContent = empty; root.append(li); return; }
+  for (const line of lines) { const li = el("li"); li.textContent = line; root.append(li); }
+}
+
+function renderAgents(agents, failures) {
+  const root = $("agents"); root.replaceChildren();
+  for (const a of agents) {
+    const st = STATUS[a.status] || STATUS.idle;
+    const card = el("div", "agent");
+    const b = el("b"); b.textContent = a.person;
+    const small = el("small"); small.textContent = a.title;
+    const status = el("span", "status");
+    const dot = el("i"); dot.style.background = st.color;
+    status.append(dot, document.createTextNode(st.label));
+    card.append(b, small, status);
+    card.title = a.summary;           /* full summary on hover, textContent-safe */
+    root.append(card);
+  }
+  if (failures.length) {
+    const li = el("div", "agent"); li.style.borderColor = "var(--critical)";
+    const b = el("b"); b.textContent = "Failures";
+    li.append(b);
+    for (const f of failures) { const s = el("small"); s.textContent = f; li.append(s); }
+    root.append(li);
+  }
+}
+
+function renderTable(history) {
+  const body = $("tbl").tBodies[0]; body.replaceChildren();
+  for (const r of [...history].reverse()) {
+    const tr = el("tr");
+    for (const v of [r.date, "RM " + fmt(r.revenue, 2), fmt(r.covers),
+                     fmt(r.prime_pct, 1) + "%", fmt(r.labour_pct, 1) + "%"]) {
+      const td = el("td"); td.textContent = v; tr.append(td);
+    }
+    body.append(tr);
+  }
+}
+
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
