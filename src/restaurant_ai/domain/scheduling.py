@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+from fractions import Fraction
 
 from restaurant_ai.db.models.enums import ShiftRole
 
@@ -196,11 +197,23 @@ def pack_shifts(
 ) -> list[tuple[int, int]]:
     """Cover an hourly requirement with as few shift-hours as possible.
 
-    Greedy peak-first: repeatedly take the busiest hour still short of cover and
-    lay down the shift window that closes the most outstanding need. That
-    naturally produces the shape a manager would draw by hand — an opening
-    shift, extra bodies across the peaks, a closing shift — rather than putting
-    everyone on for the whole day.
+    Greedy, scored by cover per paid hour: repeatedly lay down whichever shift
+    window closes the most outstanding need per hour it costs. That produces
+    the shape a manager would draw by hand — an opening shift, extra bodies
+    across the peaks, a closing shift — rather than putting everyone on for the
+    whole day.
+
+    It used to anchor each pass on the busiest uncovered hour and score windows
+    by raw coverage, which cost real money two ways. A longer window always beat
+    a shorter one if it reached one more needed hour, however many idle hours it
+    dragged in. And anchoring on the peak meant that when every outstanding hour
+    tied — as they do for a role wanted once at noon and again through dinner —
+    the tie-break picked the earliest, and the only windows considered were the
+    ones containing it. A barista needed for five scattered hours was rostered
+    for thirteen: one nine-hour shift dragged across the whole afternoon lull
+    because it happened to also reach the evening. Scoring every feasible window
+    by efficiency rosters that barista for eight, over lunch and dinner, with
+    the lull unpaid.
 
     Returns (start_hour, end_hour) pairs, one per person.
     """
@@ -219,30 +232,26 @@ def pack_shifts(
     shifts: list[tuple[int, int]] = []
     # Bounded by total need: each pass closes at least one person-hour.
     for _ in range(sum(need.values()) + 1):
-        peak = max(
-            (h for h, n in outstanding.items() if n > 0),
-            key=lambda h: (outstanding[h], -h),
-            default=None,
-        )
-        if peak is None:
+        if not any(count > 0 for count in outstanding.values()):
             break
 
-        best: tuple[int, int, int] | None = None  # (covered, -length, start)
+        # (cover per paid hour, hours closed, shorter, earlier). The ratio is
+        # what stops an hour of cover nobody needs being bought to reach one
+        # that is; the rest only settle ties.
+        best: tuple[Fraction, int, int, int] | None = None
         for length in range(min_hours, max_hours + 1):
-            for start in range(peak - length + 1, peak + 1):
-                if start < first or start + length > last:
-                    continue
+            for start in range(first, last - length + 1):
                 covered = sum(1 for h in range(start, start + length) if outstanding.get(h, 0) > 0)
-                # Most outstanding hours closed; ties go to the shorter shift,
-                # since an hour of cover nobody needs is an hour paid for
-                # nothing.
-                candidate = (covered, -length, start)
+                if not covered:
+                    continue
+                candidate = (Fraction(covered, length), covered, -length, -start)
                 if best is None or candidate > best:
                     best = candidate
 
         if best is None:
             break
-        _covered, negative_length, start = best
+        _ratio, _covered, negative_length, negative_start = best
+        start = -negative_start
         end = start - negative_length
         for hour in range(start, end):
             if outstanding.get(hour, 0) > 0:
