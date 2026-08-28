@@ -129,13 +129,63 @@ git pull && docker compose up -d --build
 
 `migrate` runs again on the way up, so schema changes apply themselves.
 
+## The most powerful free host
+
+**Oracle Cloud Always Free** gives you, free and not as a trial: 4 ARM cores and
+**24 GB of RAM**, 200 GB of storage, 10 TB/month of traffic. That is several
+times the machine a €5 VPS rents you, and this platform needs about 2 GB — so
+it is not a compromise, it is over-provisioning by a factor of ten.
+
+Three honest caveats, because none of them are in the marketing:
+
+1. **It asks for a card to verify who you are.** It charges about a dollar and
+   refunds it, and the Always Free resources genuinely never bill. But if a card
+   is the thing that blocked Railway, this blocks in the same place — skip to
+   "a machine you own" below, which is a real answer and not a consolation.
+2. **The ARM capacity is often exhausted.** "Out of host capacity" on the free
+   ARM shape is common in popular regions and people retry for days. Singapore
+   is nearest to Malaysia and busy; try creating the instance at an odd hour,
+   and try the other Asian regions before giving up.
+3. **It is ARM, not Intel.** Everything here has arm64 wheels
+   (`psycopg[binary]`, `pydantic-core`, `uvloop`) and the image carries
+   `build-essential` for anything that does not, so `docker compose up --build`
+   is the same command. It is untested on ARM by me — this sandbox is x86_64 —
+   so expect the first build to take longer and tell me if anything fails.
+
+Once the instance exists (Ubuntu 22.04+, "Ampere" shape, 4 OCPU / 24 GB):
+
+```bash
+sudo apt update && sudo apt install -y docker.io docker-compose-v2 git
+sudo usermod -aG docker $USER && newgrp docker
+
+git clone https://github.com/whitehat26-My/Great-invention.git
+cd Great-invention
+cp .env.example .env && nano .env      # the values listed above
+docker compose up -d --build
+docker compose exec api restaurant-ai doctor
+```
+
+**Oracle's networking is famously fiddly — and none of it applies here.** Free
+instances have both a cloud security list and host `iptables`, and getting a
+port through both is where most people lose an evening. This needs no inbound
+port at all, so you can leave every one of those defaults alone.
+
+The one thing to set is the timezone, or the nightly close fires at the wrong
+hour: `sudo timedatectl set-timezone Asia/Kuala_Lumpur`.
+
 ## Picking a host
 
 | | cost | needs a card | good for |
 |---|---|---|---|
-| A machine you own — mini PC, old laptop, Pi 5 | none, if you have one | no | one restaurant, no monthly bill, data stays on site |
-| A Malaysian VPS (Exabytes, ServerFreak, …) | ~RM20–40/mo | often FPX or local transfer | no hardware to mind, someone else's power and internet |
+| **Oracle Cloud Always Free** | free forever | yes, to verify | far the most powerful free option: 4 ARM cores, 24 GB |
+| A machine you own — mini PC, old laptop, Pi 5 | none, if you have one | **no** | no bill, no card, data stays on site |
+| A Malaysian VPS (Exabytes, ServerFreak, …) | ~RM20–40/mo | often FPX or local transfer | no hardware to mind, someone else's power |
 | Hetzner, Contabo, DigitalOcean | €4–6/mo | yes | cheapest per unit of RAM, pay in EUR/USD |
+| Google Cloud `e2-micro` | free forever | yes | 1 GB RAM — too tight for Postgres plus four workers |
+
+Two free tiers that look right and are not: **Render**'s free Postgres expires
+after a month and its free services sleep when idle, which for a listener means
+deaf; **Railway**'s free allowance is trial credit, not a standing tier.
 
 Because nothing needs a public address, the first row is a real answer rather
 than a compromise — the usual reason to rent a server is to be reachable from
