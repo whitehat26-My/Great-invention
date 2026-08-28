@@ -185,6 +185,38 @@ restaurant's brain off, however healthy every process was when the lid dimmed.
 This is the honest budget option, and its honest limits: the bot is only awake
 while that machine is on and on wifi. For always-on, the sections below.
 
+## Reaching the dashboard from anywhere
+
+Telegram works from anywhere because the listener dials out. The dashboard and
+the system map are the opposite: a browser has to reach *in*, which on a laptop
+behind a home router means port forwarding, a domain and a certificate — three
+things to get wrong, one of which is a hole in the restaurant's network.
+
+A Cloudflare quick tunnel dials out too, so there is still no inbound port, no
+domain and no certificate.
+
+```powershell
+winget install --id Cloudflare.cloudflared     # once
+restaurant-ai tunnel                            # leave it running
+```
+
+It prints the address and sends both links to the approvals chat, because a
+quick tunnel's name is random and changes each restart — an address the owner
+has to go and find is an address they will not use.
+
+**The link is the credential.** A browser address bar cannot set a header, so
+the key travels in the URL exactly as it does on the local dashboard. Anyone the
+link is forwarded to can read the restaurant's numbers. `restaurant-ai tunnel`
+refuses to start at all when `APPROVAL_API_KEY` is unset, since a public address
+for a system that refuses to serve is a locked door with a sign on it.
+
+Before this existed, `GET /agents` and `GET /agents/runs` answered without
+credentials — harmless while they only ever answered on localhost, and not
+harmless with a public address, because a run summary is the restaurant's
+business. The whole `/agents` router is now behind the key, and a test walks the
+app's own schema asserting that every endpoint returning data refuses an
+anonymous caller, so a new route joins that check by existing.
+
 ## The most powerful free host
 
 **Oracle Cloud Always Free** gives you, free and not as a trial: 4 ARM cores and

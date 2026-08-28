@@ -1,4 +1,13 @@
-"""Agent control: list them, run one, inspect what a run did."""
+"""Agent control: list them, run one, inspect what a run did.
+
+Every route here is behind the API key, reads included. Running an agent
+obviously needs authority; *reading* the runs needed it too and did not have it
+— an agent run's summary is the restaurant's business ("drafting purchase
+orders for anything at or below the updated reorder points", with values), and
+the run list is a diary of what the restaurant did and when. That was harmless
+while this only ever answered on localhost, and stopped being harmless the
+moment a tunnel gave it a public address.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +24,9 @@ from restaurant_ai.db.models import AgentAction, AgentRun
 from restaurant_ai.kernel.registry import all_agents, get_agent
 from restaurant_ai.kernel.runner import run_agent
 
-router = APIRouter(prefix="/agents", tags=["agents"])
+# Applied to the router rather than route by route: a new endpoint here should
+# be closed because it is here, not because somebody remembered.
+router = APIRouter(prefix="/agents", tags=["agents"], dependencies=[Depends(require_api_key)])
 
 
 class RunRequest(BaseModel):
@@ -44,7 +55,7 @@ async def list_agents() -> dict[str, Any]:
     }
 
 
-@router.post("/{name}/run", status_code=status.HTTP_200_OK, dependencies=[Depends(require_api_key)])
+@router.post("/{name}/run", status_code=status.HTTP_200_OK)
 async def trigger_run(name: str, request: RunRequest) -> dict[str, Any]:
     """Run an agent now.
 

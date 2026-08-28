@@ -929,3 +929,52 @@ def install_startup(
     typer.echo(f"\n  Installed: {script}")
     typer.echo("  At every logon, Windows opens the restaurant's window itself.")
     typer.echo("  Try it now by double-clicking that file. Undo with --remove.")
+
+
+@app.command("tunnel")
+def tunnel(
+    port: int = typer.Option(8000, help="The local port to publish."),
+    announce: bool = typer.Option(True, help="Send the links to the approvals chat."),
+) -> None:
+    """Give the dashboard a public HTTPS address, without opening a port.
+
+    A Cloudflare quick tunnel dials out the same way the Telegram listener
+    does, so there is no port to forward, no domain to buy and no certificate
+    to renew. The address is random and changes each restart, so it is sent to
+    the approvals chat rather than left for you to find.
+
+    Leave this running alongside `restaurant-ai up`. Ctrl-C closes it.
+    """
+    from restaurant_ai.config import get_settings
+    from restaurant_ai.tunnel import TunnelUnavailable, start
+    from restaurant_ai.tunnel import announce as announce_links
+
+    key = get_settings().approval_api_key
+    if not key:
+        typer.echo(
+            "\n  APPROVAL_API_KEY is not set, so the dashboard refuses to serve and a\n"
+            "  public address would publish nothing but a locked door.\n"
+            "  Put a long random value in .env first.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        process, address = start(port=port)
+    except TunnelUnavailable as exc:
+        typer.echo(f"\n  {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"\n  Dashboard:  {address}/dashboard?key={key}")
+    typer.echo(f"  System map: {address}/dashboard/map?key={key}")
+    typer.echo("\n  The link carries the key — treat it like a password.")
+    typer.echo("  Ctrl-C closes the tunnel.\n")
+
+    if announce and announce_links(address, key):
+        typer.echo("  Sent to the approvals chat.\n")
+
+    try:
+        process.wait()
+    except KeyboardInterrupt:
+        typer.echo("\n  closing the tunnel")
+        process.terminate()
