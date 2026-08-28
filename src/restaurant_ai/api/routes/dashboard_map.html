@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>System map</title>
+<style>
+  /* Same deliberate dark look and tokens as the dashboard. Departments are NOT
+     color-coded: six hues around a radial map cannot clear the colorblind
+     gates, so identity is position + label, color is one accent + status. */
+  :root {
+    color-scheme: dark;
+    --page: #0d0d0d;  --surface: #1a1a19;  --panel: rgba(26,26,25,.86);
+    --edge: #2c2c2a;  --baseline: #383835;
+    --ink: #ffffff;   --ink-2: #c3c2b7;    --ink-3: #898781;
+    --s1: #3987e5;
+    --good: #0ca30c;  --warning: #fab219;  --serious: #ec835a;  --critical: #d03b3b;
+  }
+  * { margin: 0; box-sizing: border-box; }
+  body { background: var(--page); color: var(--ink);
+         font: 14px/1.5 "Segoe UI", system-ui, sans-serif; min-height: 100vh; overflow-x: hidden; }
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image:
+      repeating-linear-gradient(0deg, transparent, transparent 43px, var(--edge) 43px, var(--edge) 44px),
+      repeating-linear-gradient(90deg, transparent, transparent 43px, var(--edge) 43px, var(--edge) 44px);
+    opacity: .14;
+    mask-image: radial-gradient(ellipse 75% 75% at 42% 50%, #000 0%, transparent 75%);
+  }
+
+  header { position: relative; z-index: 2; display: flex; gap: 14px; align-items: baseline;
+           padding: 22px clamp(16px, 3vw, 40px) 0; }
+  h1 { font-size: 18px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; }
+  header a { color: var(--ink-3); font-size: 12px; text-decoration: none; margin-left: auto;
+             border: 1px solid var(--edge); padding: 5px 12px; border-radius: 999px; }
+  header a:hover { color: var(--ink-2); border-color: var(--baseline); }
+
+  .stage { position: relative; z-index: 1; display: grid;
+           grid-template-columns: minmax(0, 1fr) minmax(300px, 420px); gap: 0; }
+  @media (max-width: 900px) { .stage { grid-template-columns: 1fr; } }
+
+  #map { display: block; width: 100%; height: auto; max-height: calc(100vh - 80px); }
+
+  /* --- the map itself ----------------------------------------------------- */
+  .link, .flow { pointer-events: none; }
+  .link { stroke: var(--baseline); stroke-width: 1.2; fill: none; }
+  .flow { stroke: var(--s1); stroke-width: 1.2; fill: none; opacity: .5;
+          stroke-dasharray: 3 9; animation: flow 1.6s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -12; } }
+
+  .core-halo { fill: none; stroke: var(--s1); opacity: .22; animation: halo 4s ease-out infinite; }
+  .core-halo.h2 { animation-delay: 2s; }
+  @keyframes halo { from { transform: scale(.72); opacity: .3; } to { transform: scale(1.25); opacity: 0; } }
+  .core-ring { fill: none; stroke: var(--baseline); stroke-dasharray: 4 6; }
+  .core-ring.spin  { animation: spin 40s linear infinite; }
+  .core-ring.spin2 { animation: spin 60s linear infinite reverse; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .node { cursor: pointer; }
+  .node circle.body { fill: var(--surface); stroke: var(--baseline); stroke-width: 1.4;
+                      transition: stroke .15s, filter .15s; }
+  .node:hover circle.body, .node:focus-visible circle.body, .node.active circle.body {
+    stroke: var(--s1); filter: drop-shadow(0 0 7px rgba(57,135,229,.45)); }
+  .node:focus { outline: none; }
+  .node text { fill: var(--ink-2); }
+  .node .who  { fill: var(--ink); font-size: 13px; font-weight: 600; }
+  .node .what { fill: var(--ink-3); font-size: 10px; }
+  .dept text { fill: var(--ink-2); font-size: 11px; font-weight: 600;
+               letter-spacing: .14em; text-transform: uppercase; }
+  .brain-label { fill: var(--ink); font-size: 13px; font-weight: 700; letter-spacing: .2em; }
+  .brain-sub   { fill: var(--ink-3); font-size: 10px; letter-spacing: .1em; }
+
+  /* --- the detail panel --------------------------------------------------- */
+  aside { background: var(--panel); border-left: 1px solid var(--edge); backdrop-filter: blur(6px);
+          padding: 22px 24px 40px; min-height: calc(100vh - 60px);
+          transform: translateX(14px); opacity: 0; transition: all .25s cubic-bezier(.2,.7,.3,1); }
+  aside.open { transform: none; opacity: 1; }
+  @media (max-width: 900px) {
+    aside { border-left: none; border-top: 1px solid var(--edge); min-height: 0; } }
+
+  aside .kicker { color: var(--ink-3); font-size: 11px; letter-spacing: .18em; text-transform: uppercase; }
+  aside h2 { font-size: 22px; margin: 2px 0 0; }
+  aside .role { color: var(--ink-2); font-size: 13px; margin-bottom: 12px; }
+  aside .badges { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .badge { font-size: 11px; border: 1px solid var(--edge); border-radius: 999px; padding: 3px 10px;
+           color: var(--ink-2); }
+  .badge i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; }
+  aside p { color: var(--ink-2); margin-bottom: 14px; }
+  aside h3 { font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3);
+             margin: 16px 0 8px; }
+  .tool { border: 1px solid var(--edge); border-left: 3px solid var(--baseline); border-radius: 6px;
+          padding: 8px 12px; margin-bottom: 8px; background: var(--surface); }
+  .tool.gated { border-left-color: var(--warning); }
+  .tool b { font-size: 13px; font-family: ui-monospace, monospace; }
+  .tool .gate { color: var(--warning); font-size: 11px; margin-left: 8px; }
+  .tool p { color: var(--ink-3); font-size: 12px; margin: 3px 0 0; }
+  details { margin-top: 14px; }
+  summary { cursor: pointer; color: var(--ink-3); font-size: 12px; }
+  pre { white-space: pre-wrap; font: 12px/1.6 ui-monospace, monospace; color: var(--ink-2);
+        background: var(--surface); border: 1px solid var(--edge); border-radius: 6px;
+        padding: 12px; margin-top: 8px; }
+  .hint { color: var(--ink-3); font-size: 13px; margin-top: 40px; text-align: center; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; justify-content: center;
+            padding: 0 16px 18px; color: var(--ink-3); font-size: 12px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 8px; height: 8px; border-radius: 50%; }
+  .dept-list { list-style: none; }
+  .dept-list li { padding: 8px 0; border-bottom: 1px solid var(--edge); cursor: pointer; }
+  .dept-list li:hover b { color: var(--s1); }
+  .dept-list b { display: block; font-size: 14px; }
+  .dept-list span { color: var(--ink-3); font-size: 12px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .flow, .core-halo, .core-ring.spin, .core-ring.spin2 { animation: none; }
+    aside { transition: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">System map</h1>
+  <a id="back" href="#">← dashboard</a>
+</header>
+
+<div class="stage">
+  <div>
+    <svg id="map" viewBox="0 0 1000 940" role="img"
+         aria-label="The AI brain at the centre, six departments around it; press a node for detail"></svg>
+    <div class="legend" id="legend" aria-label="What the status dots mean"></div>
+  </div>
+  <aside id="panel" class="open"><div class="hint">Press a department or an agent<br>to see how it works.</div></aside>
+</div>
+
+<script>
+"use strict";
+/* All dynamic content lands via textContent — briefs and summaries are data. */
+const KEY = new URLSearchParams(location.search).get("key") || "";
+$("back").href = "/dashboard?key=" + encodeURIComponent(KEY);
+
+function $(id) { return document.getElementById(id); }
+const NS = "http://www.w3.org/2000/svg";
+const svgel = (tag, attrs = {}) => {
+  const n = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  return n;
+};
+const el = (tag, cls) => { const n = document.createElement(tag); if (cls) n.className = cls; return n; };
+
+const STATUS = {
+  completed:         { color: "var(--good)",     label: "✓ completed today" },
+  awaiting_approval: { color: "var(--warning)",  label: "⧗ awaiting your approval" },
+  running:           { color: "var(--s1)",       label: "… running now" },
+  failed:            { color: "var(--critical)", label: "✕ failed today" },
+  rejected:          { color: "var(--serious)",  label: "⊘ rejected today" },
+  idle:              { color: "var(--ink-3)",    label: "– idle today" },
+};
+
+async function boot() {
+  let data;
+  try {
+    const res = await fetch("/dashboard/map/data", { headers: { "X-API-Key": KEY } });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    data = await res.json();
+  } catch (e) {
+    const hint = document.querySelector(".hint");
+    hint.textContent = "Could not load the map: " + e.message;
+    return;
+  }
+  $("title").textContent = data.restaurant + " — system map";
+  draw(data);
+}
+
+function draw(data) {
+  const svg = $("map"); svg.replaceChildren();
+  const CX = 500, CY = 470, DEPT_R = 235, AGENT_R = 392;
+  const depts = data.departments;
+
+  /* links first, so nodes sit on top */
+  const links = svgel("g"); svg.append(links);
+
+  /* ------- the brain ------- */
+  const brain = svgel("g", { transform: `translate(${CX},${CY})` });
+  for (const cls of ["core-halo", "core-halo h2"])
+    brain.append(svgel("circle", { r: 86, class: cls, "stroke-width": 2,
+                                   style: "transform-origin:0 0" }));
+  brain.append(svgel("circle", { r: 86, fill: "var(--surface)", stroke: "var(--s1)",
+                                 "stroke-width": 1.6,
+                                 style: "filter:drop-shadow(0 0 14px rgba(57,135,229,.35))" }));
+  brain.append(svgel("circle", { r: 104, class: "core-ring spin",  style: "transform-origin:0 0" }));
+  brain.append(svgel("circle", { r: 122, class: "core-ring spin2", style: "transform-origin:0 0" }));
+  /* a small neural glyph: three layers of dots, connected */
+  const layers = [[-26, 3], [0, 4], [26, 3]];
+  const pts = layers.flatMap(([x, n], li) =>
+    Array.from({ length: n }, (_, i) => [x, (i - (n - 1) / 2) * 22, li]));
+  for (const [x1, y1, l1] of pts) for (const [x2, y2, l2] of pts)
+    if (l2 === l1 + 1)
+      brain.append(svgel("line", { x1, y1, x2, y2, stroke: "var(--baseline)", "stroke-width": 1 }));
+  for (const [x, y] of pts)
+    brain.append(svgel("circle", { cx: x, cy: y, r: 4.5, fill: "var(--s1)",
+                                   stroke: "var(--surface)", "stroke-width": 2 }));
+  const bl = svgel("text", { y: 62, "text-anchor": "middle", class: "brain-label" });
+  bl.textContent = "AI CORE";
+  const total = depts.reduce((n, d) => n + d.agents.length, 0);
+  const bs = svgel("text", { y: 76, "text-anchor": "middle", class: "brain-sub" });
+  bs.textContent = `one shared graph · ${total} agents`;
+  brain.append(bl, bs);
+  svg.append(brain);
+
+  /* ------- departments + agents ------- */
+  const step = (Math.PI * 2) / depts.length;
+  depts.forEach((dept, di) => {
+    const a = -Math.PI / 2 + di * step;
+    const dx = CX + DEPT_R * Math.cos(a), dy = CY + DEPT_R * Math.sin(a);
+
+    links.append(svgel("path", { class: "link", d: `M${CX},${CY} L${dx},${dy}` }));
+    links.append(svgel("path", { class: "flow", d: `M${CX},${CY} L${dx},${dy}`,
+                                 style: `animation-delay:${di * 0.2}s` }));
+
+    const dnode = svgel("g", { class: "node dept", transform: `translate(${dx},${dy})`,
+                               tabindex: 0, role: "button" });
+    dnode.append(svgel("circle", { class: "body", r: 34 }));
+    const icon = svgel("text", { "text-anchor": "middle", y: 0, "font-size": 20 });
+    icon.textContent = { front_of_house: "🛎", kitchen: "🍳", supply: "📦",
+                         marketing: "📣", workforce: "👥", finance: "🧾" }[dept.name] || "◆";
+    const label = svgel("text", { "text-anchor": "middle", y: 52 });
+    label.textContent = dept.label;
+    dnode.append(icon, label);
+    const openDept = () => { setActive(dnode); showDept(dept); };
+    dnode.addEventListener("click", openDept);
+    dnode.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") openDept(); });
+    svg.append(dnode);
+
+    /* agents fan out past their department */
+    const n = dept.agents.length;
+    dept.agents.forEach((agent, ai) => {
+      const spread = n > 1 ? (ai - (n - 1) / 2) * 0.34 : 0;
+      const aa = a + spread;
+      const ax = CX + AGENT_R * Math.cos(aa), ay = CY + AGENT_R * Math.sin(aa);
+      links.append(svgel("path", { class: "link", d: `M${dx},${dy} L${ax},${ay}`,
+                                   "stroke-dasharray": "2 4" }));
+
+      const node = svgel("g", { class: "node", transform: `translate(${ax},${ay})`,
+                                tabindex: 0, role: "button" });
+      node.append(svgel("circle", { class: "body", r: 27 }));
+      const st = STATUS[agent.status] || STATUS.idle;
+      node.append(svgel("circle", { cx: 19, cy: -19, r: 5, fill: st.color,
+                                    stroke: "var(--surface)", "stroke-width": 2 }));
+      const who = svgel("text", { "text-anchor": "middle", y: 4, class: "who" });
+      who.textContent = agent.person;
+      const below = ay > CY + 40;
+      const short = agent.title.replace(" Agent", "");
+      const parts = short.length > 16 && short.includes(" & ")
+        ? short.split(" & ").map((t, i) => (i ? t : t + " &"))
+        : [short];
+      const ty = below ? 46 : -36 - (parts.length - 1) * 12;
+      const what = svgel("text", { "text-anchor": "middle", class: "what" });
+      parts.forEach((line, i) => {
+        const span = svgel("tspan", { x: 0, y: ty + i * 12 });
+        span.textContent = line;
+        what.append(span);
+      });
+      node.append(who, what);
+      const openAgent = () => { setActive(node); showAgent(dept, agent); };
+      node.addEventListener("click", openAgent);
+      node.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") openAgent(); });
+      svg.append(node);
+    });
+  });
+
+  const present = new Set(depts.flatMap((d) => d.agents.map((a) => a.status)));
+  const legend = $("legend"); legend.replaceChildren();
+  for (const [status, st] of Object.entries(STATUS)) {
+    if (!present.has(status)) continue;
+    const item = document.createElement("span");
+    const dot = document.createElement("i"); dot.style.background = st.color;
+    item.append(dot, document.createTextNode(st.label.slice(2)));
+    legend.append(item);
+  }
+
+  function setActive(node) {
+    svg.querySelectorAll(".node.active").forEach((x) => x.classList.remove("active"));
+    node.classList.add("active");
+  }
+
+  function showDept(dept) {
+    const panel = $("panel"); panel.replaceChildren(); panel.classList.remove("open");
+    const kicker = el("div", "kicker"); kicker.textContent = "department";
+    const h2 = el("h2"); h2.textContent = dept.label;
+    const role = el("div", "role");
+    role.textContent = dept.agents.length + " agent(s). Press one for the full picture.";
+    panel.append(kicker, h2, role);
+    const ul = el("ul", "dept-list");
+    for (const agent of dept.agents) {
+      const li = el("li");
+      const b = el("b"); b.textContent = agent.person + " — " + agent.title;
+      const span = el("span"); span.textContent = agent.description;
+      li.append(b, span);
+      li.addEventListener("click", () => showAgent(dept, agent));
+      ul.append(li);
+    }
+    panel.append(ul);
+    requestAnimationFrame(() => panel.classList.add("open"));
+  }
+
+  function showAgent(dept, agent) {
+    const panel = $("panel"); panel.replaceChildren(); panel.classList.remove("open");
+
+    const kicker = el("div", "kicker"); kicker.textContent = dept.label;
+    const h2 = el("h2"); h2.textContent = agent.person;
+    const role = el("div", "role"); role.textContent = agent.title;
+    panel.append(kicker, h2, role);
+
+    const badges = el("div", "badges");
+    const st = STATUS[agent.status] || STATUS.idle;
+    const sb = el("span", "badge"); const dot = el("i"); dot.style.background = st.color;
+    sb.append(dot, document.createTextNode(st.label));
+    const tier = el("span", "badge");
+    tier.textContent = agent.model_tier === "reasoning" ? "🧠 reasoning model" : "💬 conversational model";
+    badges.append(sb, tier); panel.append(badges);
+
+    const what = el("h3"); what.textContent = "What this agent does";
+    const p1 = el("p"); p1.textContent = agent.description;
+    panel.append(what, p1);
+
+    const when = el("h3"); when.textContent = "When it runs";
+    const p2 = el("p"); p2.textContent = agent.schedule;
+    panel.append(when, p2);
+
+    if (agent.last_summary) {
+      const lastH = el("h3"); lastH.textContent = "Last run said";
+      const p3 = el("p"); p3.textContent = "“" + agent.last_summary + "”";
+      panel.append(lastH, p3);
+    }
+
+    const toolsH = el("h3");
+    toolsH.textContent = "Its tools (" + agent.tools.length + ")";
+    panel.append(toolsH);
+    for (const tool of agent.tools) {
+      const card = el("div", tool.gated ? "tool gated" : "tool");
+      const b = el("b"); b.textContent = tool.name;
+      card.append(b);
+      if (tool.gated) {
+        const g = el("span", "gate"); g.textContent = "⚠ needs your approval";
+        card.append(g);
+      }
+      const desc = el("p"); desc.textContent = tool.description;
+      card.append(desc);
+      panel.append(card);
+    }
+
+    const det = el("details");
+    const sum = el("summary"); sum.textContent = "How it thinks — the operating brief it is given";
+    const pre = el("pre"); pre.textContent = agent.brief;
+    det.append(sum, pre); panel.append(det);
+
+    requestAnimationFrame(() => panel.classList.add("open"));
+  }
+}
+
+boot();
+</script>
+</body>
+</html>

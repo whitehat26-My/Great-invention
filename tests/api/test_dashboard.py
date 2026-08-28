@@ -76,3 +76,75 @@ class TestTheData:
         data = client.get(f"/dashboard/data?key={KEY}").json()
         renderable = {"idle", "completed", "awaiting_approval", "failed", "rejected", "running"}
         assert all(a["status"] in renderable for a in data["agents"])
+
+
+class TestTheSystemMap:
+    """The pressable map: the brain, six departments, and every agent's detail."""
+
+    def test_no_key_configured_refuses(self, anonymous):
+        assert anonymous.get("/dashboard/map").status_code == 503
+        assert anonymous.get("/dashboard/map/data").status_code == 503
+
+    def test_a_wrong_key_is_refused(self, client):
+        assert client.get("/dashboard/map?key=nope").status_code == 401
+        assert client.get("/dashboard/map/data?key=nope").status_code == 401
+
+    def test_the_map_page_is_an_empty_shell(self, client):
+        page = client.get(f"/dashboard/map?key={KEY}")
+        assert page.status_code == 200
+        assert "/dashboard/map/data" in page.text
+        # No agent identity or brief text is baked into the page itself.
+        assert "Rain" not in page.text
+        assert "purchase order" not in page.text.lower()
+
+    def test_the_map_describes_the_system_the_registry_declares(self, client):
+        data = client.get(f"/dashboard/map/data?key={KEY}").json()
+        assert set(data) == {"restaurant", "departments"}
+
+        departments = {d["name"]: d for d in data["departments"]}
+        assert set(departments) == {
+            "front_of_house",
+            "kitchen",
+            "supply",
+            "marketing",
+            "workforce",
+            "finance",
+        }
+        agents = [a for d in data["departments"] for a in d["agents"]]
+        assert len(agents) == 11
+
+        for agent in agents:
+            assert set(agent) == {
+                "name",
+                "person",
+                "title",
+                "description",
+                "model_tier",
+                "schedule",
+                "brief",
+                "status",
+                "last_summary",
+                "tools",
+            }
+            # "How the agent works" must never be blank on the panel.
+            assert agent["brief"].strip()
+            assert agent["description"].strip()
+            assert agent["schedule"].strip()
+            for tool in agent["tools"]:
+                assert set(tool) == {"name", "description", "gated"}
+
+    def test_gated_tools_are_marked_as_needing_the_owner(self, client):
+        """Rain drafts POs behind the approval gate; the map must say so."""
+        data = client.get(f"/dashboard/map/data?key={KEY}").json()
+        rain = next(a for d in data["departments"] for a in d["agents"] if a["person"] == "Rain")
+        gated = {t["name"] for t in rain["tools"] if t["gated"]}
+        assert "draft_purchase_orders" in gated
+
+    def test_every_department_label_is_human(self, client):
+        data = client.get(f"/dashboard/map/data?key={KEY}").json()
+        for dept in data["departments"]:
+            assert dept["label"] and "_" not in dept["label"]
+
+    def test_the_dashboard_links_to_the_map(self, client):
+        page = client.get(f"/dashboard?key={KEY}")
+        assert "/dashboard/map" in page.text
