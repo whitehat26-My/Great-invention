@@ -773,3 +773,47 @@ def doctor() -> None:
     report = diagnose()
     typer.echo(render(report))
     raise typer.Exit(0 if report.healthy else 1)
+
+
+@app.command("up")
+def up(
+    with_api: bool = typer.Option(
+        True, help="Also run the API (dashboard, system map, webhooks) on :8000."
+    ),
+) -> None:
+    """Run the whole restaurant in one window: listener, beat, worker, API.
+
+    Docker Compose is the right answer on a server; this is the answer on the
+    machine you already have. One window to open, one Ctrl-C to stop, and a
+    child that dies at 03:00 is restarted without you — while one that dies
+    instantly every time is reported and given up on, because restarting a bad
+    config forever is not resilience.
+
+    Close this window and the restaurant is off. On Windows, Task Scheduler can
+    open it for you at logon — DEPLOY.md has the exact line.
+    """
+    from sqlalchemy import text as sql_text
+
+    from restaurant_ai.config import get_settings
+    from restaurant_ai.db.base import get_engine
+    from restaurant_ai.supervisor import default_children, run
+
+    # Fail fast on the one dependency every child shares. Without this the
+    # supervisor faithfully restarts four crash-looping processes and the
+    # screen fills with tracebacks that all mean "Postgres is not running".
+    try:
+        with get_engine().connect() as conn:
+            conn.execute(sql_text("select 1"))
+    except Exception as exc:
+        typer.echo(f"\n  Postgres is not reachable: {exc}", err=True)
+        typer.echo(
+            "  Start it first — `make up` (Linux/macOS) or `docker compose up -d "
+            "postgres redis` — then run `restaurant-ai up` again.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    settings = get_settings()
+    typer.echo(f"\n  {settings.restaurant_name} — everything, in this window.")
+    typer.echo("  Ctrl-C stops the lot. Close the window and the restaurant is off.\n")
+    raise typer.Exit(code=run(default_children(include_api=with_api)))

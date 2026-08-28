@@ -240,6 +240,11 @@ restaurant-ai --version                  # what is running, and from where
 
 ### Deploying it
 
+`restaurant-ai up` runs the whole restaurant — listener, beat, worker, API — in
+one window, restarting anything that dies, stopping the whole tree on one
+Ctrl-C. It is the answer on the machine you already have; Docker Compose is the
+answer on a server.
+
 Everything above runs while a terminal is open. **[DEPLOY.md](DEPLOY.md)** is how
 it keeps running when there is not: `docker compose up -d --build` brings up all
 five processes with `restart: unless-stopped` and migrations applied first.
