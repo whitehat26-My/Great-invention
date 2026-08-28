@@ -150,6 +150,14 @@ def handle_message(message: dict[str, Any]) -> str | None:
         log.warning("ignored a message from outside the allow-list", chat=chat_id, user=user_id)
         raise UnauthorisedPresser(f"chat={chat_id} user={user_id}")
 
+    # Show life before doing anything slow. Thinking and being dead look
+    # identical from a phone, and the typing bubble is the cheapest way to tell
+    # them apart — it costs one call and needs no reply of its own.
+    try:
+        api("sendChatAction", chat_id=chat_id, action="typing")
+    except Exception as exc:  # never let the courtesy break the answer
+        log.debug("could not send typing action", error=str(exc))
+
     command = text.split()[0].lower().split("@")[0] if text.startswith("/") else ""
 
     if command in ("/help", "/start"):
@@ -419,7 +427,10 @@ def listen(on_event: Any = None, max_rounds: int | None = None) -> None:
             "refuse. Delete it first (deleteWebhook), or run the webhook path instead."
         )
 
-    log.info("telegram listener started", bot=described["username"])
+    log.info(
+        "telegram listener started — questions, instructions and approvals",
+        bot=described["username"],
+    )
     offset: int | None = None
     rounds = 0
     while max_rounds is None or rounds < max_rounds:

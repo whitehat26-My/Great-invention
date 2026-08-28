@@ -72,11 +72,22 @@ def _check_model(report: Diagnosis) -> None:
             "Set LLM_PROVIDER and the matching API key in .env to use a real model.",
         )
         return
-    report.add(
-        "language model",
-        True,
-        f"{described.get('provider')} — {described.get('conversational', '?')}",
-    )
+    # Configured is not the same as working. A key that is right and a free tier
+    # that is spent look identical from the settings, and only one of them can
+    # answer a question — so ask it something and see.
+    name = f"{described.get('provider')} — {described.get('conversational', '?')}"
+    try:
+        from langchain_core.messages import HumanMessage
+
+        reply = llm.get_model("conversational", interactive=True).invoke(
+            [HumanMessage(content="Reply with the single word: ok")]
+        )
+        del reply
+        report.add("language model", True, f"{name}, answering")
+    except Exception as exc:
+        from restaurant_ai.assistant import explain_model_failure
+
+        report.add("language model", False, f"{name} — {exc}", explain_model_failure(exc))
 
 
 def _check_telegram(report: Diagnosis) -> None:
@@ -211,9 +222,12 @@ def render(report: Diagnosis) -> str:
     width = max(len(check.name) for check in report.checks) if report.checks else 0
     lines = [f"{settings.restaurant_name} — what is and is not working", ""]
     for check in report.checks:
-        lines.append(
-            f"  {'ok  ' if check.ok else 'FAIL'}  {check.name.ljust(width)}  {check.detail}"
-        )
+        # Providers answer a failed call with a page of JSON. The fix line below
+        # is what the owner acts on; this line only has to identify the problem.
+        detail = " ".join(check.detail.split())
+        if len(detail) > 160:
+            detail = detail[:160].rstrip() + "…"
+        lines.append(f"  {'ok  ' if check.ok else 'FAIL'}  {check.name.ljust(width)}  {detail}")
 
     broken = [check for check in report.checks if not check.ok and check.fix]
     if broken:

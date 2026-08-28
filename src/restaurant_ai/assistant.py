@@ -151,16 +151,53 @@ def answer(question: str, session: Session | None = None) -> str:
     from langchain_core.messages import HumanMessage, SystemMessage
 
     # No tools are bound. This model cannot act on the restaurant.
-    model = llm.get_model("conversational")
-    response = model.invoke(
-        [SystemMessage(content=_system_prompt(snapshot)), HumanMessage(content=question)]
-    )
+    try:
+        model = llm.get_model("conversational", interactive=True)
+        response = model.invoke(
+            [SystemMessage(content=_system_prompt(snapshot)), HumanMessage(content=question)]
+        )
+    except Exception as exc:
+        log.warning("answering failed", error=str(exc))
+        return explain_model_failure(exc)
     text = _message_text(response)
     if not text:
         return "I could not put an answer together just then. Ask me again?"
     if len(text) > _MAX_ANSWER_CHARS:
         text = text[:_MAX_ANSWER_CHARS].rstrip() + "…"
     return text
+
+
+def explain_model_failure(exc: Exception) -> str:
+    """A provider error, in words the owner can do something about.
+
+    "ResourceExhausted: 429" is the model's language, not the restaurant's, and
+    the three failures that actually happen have three different answers: wait
+    until tomorrow, check the network, or nothing is wrong and it was just slow.
+    """
+    detail = str(exc)
+    lowered = detail.lower()
+
+    if "429" in detail or "quota" in lowered or "resource_exhausted" in lowered:
+        return (
+            "I have used up today's free quota with the language model, so I cannot "
+            "think about that until it resets.\n\n"
+            "/run <name>, /brief, /pending and /agents all still work — none of them "
+            "need the model.\n\n"
+            "The free tier counts per model, so pointing "
+            "GOOGLE_MODEL_CONVERSATIONAL at a different one in .env buys another day's "
+            "worth immediately."
+        )
+    if "timeout" in lowered or "deadline" in lowered or "timed out" in lowered:
+        return (
+            "The language model did not answer in time. Ask me again, or use "
+            "/run <name> which does not need it."
+        )
+    if "api key" in lowered or "unauthenticated" in lowered or "permission" in lowered:
+        return (
+            "The language model refused my key. Check GOOGLE_API_KEY (or "
+            "ANTHROPIC_API_KEY) in .env — `restaurant-ai doctor` will confirm it."
+        )
+    return f"I could not reach the language model ({type(exc).__name__}: {detail[:110]})."
 
 
 def _offline_answer(question: str, snapshot: dict[str, Any]) -> str:
@@ -281,7 +318,7 @@ def route(instruction: str) -> Intent:
     from langchain_core.messages import HumanMessage, SystemMessage
 
     try:
-        model = llm.get_model("conversational")
+        model = llm.get_model("conversational", interactive=True)
         response = model.invoke(
             [
                 SystemMessage(content=_ROUTER_PROMPT.format(menu=_agent_menu())),
@@ -291,7 +328,7 @@ def route(instruction: str) -> Intent:
         verdict = _message_text(response).strip().splitlines()[0].strip()
     except Exception as exc:
         log.warning("routing failed", error=str(exc))
-        return Intent(kind="unclear", reason=f"I could not work out what you meant ({exc}).")
+        return Intent(kind="unclear", reason=explain_model_failure(exc))
 
     if verdict.upper().startswith("QUESTION"):
         return Intent(kind="question")

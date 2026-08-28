@@ -86,7 +86,7 @@ class TestItCannotAct:
                 return Response()
 
         monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
-        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier: Recorder())
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
 
         reply = answer("Order 50kg of prawns right now.", session=db)
 
@@ -106,7 +106,7 @@ class TestItCannotAct:
                 return Response()
 
         monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
-        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier: Recorder())
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
         answer("anything", session=db)
 
         system = captured["system"]
@@ -128,7 +128,7 @@ class TestItCannotAct:
                 return Response()
 
         monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
-        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier: Recorder())
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
         answer("what is the average check?", session=db)
 
         assert "RM" in captured["system"]
@@ -154,7 +154,7 @@ class TestAnswering:
                 return Response()
 
         monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
-        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier: Recorder())
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
 
         reply = answer("tell me everything", session=db)
         assert len(reply) <= 1201
@@ -174,7 +174,7 @@ class TestAnswering:
                 return Response()
 
         monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
-        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier: Recorder())
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
 
         reply = answer("what is low?", session=db)
         assert reply == "Seven ingredients are low."
@@ -202,7 +202,7 @@ class TestRoutingAnInstruction:
                 return Response()
 
         monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
-        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier: Recorder())
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
 
     def test_a_question_routes_to_answering(self, db, monkeypatch):
         self._model(monkeypatch, "QUESTION")
@@ -248,12 +248,14 @@ class TestRoutingAnInstruction:
                 raise RuntimeError("429 quota exceeded")
 
         monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
-        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier: Broken())
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Broken())
         from restaurant_ai.assistant import route
 
         intent = route("restock the kitchen")
         assert intent.kind == "unclear"
-        assert "429" in intent.reason
+        # The owner gets the plain-English version, not the provider's 429.
+        assert "free quota" in intent.reason
+        assert "429" not in intent.reason
 
     def test_nothing_said_is_unclear(self, db):
         from restaurant_ai.assistant import route
@@ -273,7 +275,7 @@ class TestRoutingAnInstruction:
                 return Response()
 
         monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
-        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier: Recorder())
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
         from restaurant_ai.assistant import route
         from restaurant_ai.kernel.registry import all_agents
 
@@ -310,3 +312,96 @@ class TestFindingAnAgentWithoutAModel:
 
         assert route("rain").kind == "run"
         assert route("how are we doing?").kind == "question"
+
+
+class TestWhenTheModelWillNotAnswer:
+    """A person waiting on a chat cannot tell slow from dead. Neither may we."""
+
+    def test_the_desk_uses_the_impatient_budget(self, db, monkeypatch):
+        """Ten retries with no deadline is right for a nightly close, not a chat."""
+        asked = {}
+
+        class Recorder:
+            def invoke(self, messages):
+                class Response:
+                    content = "ok"
+
+                return Response()
+
+        def spy(tier, *, interactive=False):
+            asked["interactive"] = interactive
+            return Recorder()
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", spy)
+
+        answer("how are we?", session=db)
+        assert asked["interactive"] is True
+
+    def test_routing_uses_it_too(self, db, monkeypatch):
+        asked = {}
+
+        class Recorder:
+            def invoke(self, messages):
+                class Response:
+                    content = "QUESTION"
+
+                return Response()
+
+        def spy(tier, *, interactive=False):
+            asked["interactive"] = interactive
+            return Recorder()
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", spy)
+
+        from restaurant_ai.assistant import route
+
+        route("anything")
+        assert asked["interactive"] is True
+
+    def test_an_exhausted_quota_is_answered_not_swallowed(self, db, monkeypatch):
+        """The failure that actually happened: silence for minutes, then nothing."""
+
+        class Exhausted:
+            def invoke(self, messages):
+                raise RuntimeError(
+                    "Error calling model (RESOURCE_EXHAUSTED): 429 RESOURCE_EXHAUSTED. "
+                    "Quota exceeded for generate_content_free_tier_requests, limit: 20"
+                )
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Exhausted())
+
+        reply = answer("how much stock?", session=db)
+        assert "used up today's free quota" in reply
+        # It must name what still works without a model.
+        assert "/run" in reply and "/brief" in reply
+
+
+class TestExplainingAModelFailure:
+    """Three failures that actually happen, three different answers."""
+
+    def test_a_quota_error_says_wait_and_what_still_works(self):
+        from restaurant_ai.assistant import explain_model_failure
+
+        said = explain_model_failure(RuntimeError("429 RESOURCE_EXHAUSTED quota exceeded"))
+        assert "free quota" in said
+        assert "counts per model" in said
+
+    def test_a_timeout_says_try_again(self):
+        from restaurant_ai.assistant import explain_model_failure
+
+        assert "did not answer in time" in explain_model_failure(TimeoutError("deadline exceeded"))
+
+    def test_a_bad_key_points_at_the_setting(self):
+        from restaurant_ai.assistant import explain_model_failure
+
+        said = explain_model_failure(RuntimeError("UNAUTHENTICATED: invalid api key"))
+        assert "GOOGLE_API_KEY" in said
+        assert "doctor" in said
+
+    def test_anything_else_still_names_the_error(self):
+        from restaurant_ai.assistant import explain_model_failure
+
+        assert "ValueError" in explain_model_failure(ValueError("something odd"))

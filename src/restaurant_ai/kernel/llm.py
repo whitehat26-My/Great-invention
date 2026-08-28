@@ -58,12 +58,19 @@ def model_name(tier: str = "conversational") -> str:
     return settings.model_reasoning if reasoning else settings.model_conversational
 
 
-def get_model(tier: str = "conversational") -> BaseChatModel:
+def get_model(tier: str = "conversational", *, interactive: bool = False) -> BaseChatModel:
     """Return the chat model for a tier.
 
     ``reasoning`` gets the stronger model for the agents doing analysis
     (pricing, reconciliation, performance); ``conversational`` gets the faster
     one for high-volume guest-facing work.
+
+    ``interactive`` is for anything a person is waiting on. The default budget
+    is ten retries with no deadline, which is correct for a scheduled run —
+    better to wait out a rate limit than fail the nightly close. On a chat it is
+    the wrong trade entirely: the caller sits in backoff for minutes saying
+    nothing, and silence is indistinguishable from a dead bot. Interactive
+    callers get one retry and a deadline, and a failure they can report.
     """
     settings = get_settings()
     provider = settings.llm_provider
@@ -77,18 +84,28 @@ def get_model(tier: str = "conversational") -> BaseChatModel:
     # Keyed by provider too. Model ids are not unique across providers in
     # principle, and a cache that assumes they are hands back the wrong client
     # the first time they collide.
-    key = f"{provider}:{name}"
+    key = f"{provider}:{name}:{'chat' if interactive else 'batch'}"
     if key in _cache:
         return _cache[key]
 
     builder = {"anthropic": _build_anthropic, "google": _build_google}[provider]
-    model = builder(settings, name)
+    model = builder(settings, name, interactive)
     log.info("model initialised", tier=tier, provider=provider, model=name)
     _cache[key] = model
     return model
 
 
-def _build_anthropic(settings: Any, name: str) -> BaseChatModel:
+def _patience(settings: Any, interactive: bool) -> dict[str, Any]:
+    """How long to keep trying, and whether to give up at all."""
+    if interactive:
+        return {
+            "max_retries": settings.llm_interactive_max_retries,
+            "timeout": settings.llm_interactive_timeout,
+        }
+    return {"max_retries": settings.llm_max_retries}
+
+
+def _build_anthropic(settings: Any, name: str, interactive: bool = False) -> BaseChatModel:
     if not settings.anthropic_api_key:
         raise RuntimeError(
             "LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set. "
@@ -102,7 +119,7 @@ def _build_anthropic(settings: Any, name: str) -> BaseChatModel:
         "model": name,
         "api_key": SecretStr(settings.anthropic_api_key),
         "max_tokens": settings.llm_max_tokens,
-        "max_retries": settings.llm_max_retries,
+        **_patience(settings, interactive),
     }
     # Only send a sampling parameter if one was actually asked for. Claude
     # Opus 5 and Sonnet 5 reject the request outright if `temperature` is
@@ -122,7 +139,7 @@ def _build_anthropic(settings: Any, name: str) -> BaseChatModel:
     return ChatAnthropic(**kwargs)  # type: ignore[arg-type]
 
 
-def _build_google(settings: Any, name: str) -> BaseChatModel:
+def _build_google(settings: Any, name: str, interactive: bool = False) -> BaseChatModel:
     if not settings.google_api_key:
         raise RuntimeError(
             "LLM_PROVIDER=google but GOOGLE_API_KEY is not set. Get a free key at "
@@ -137,7 +154,7 @@ def _build_google(settings: Any, name: str) -> BaseChatModel:
         "model": name,
         "google_api_key": SecretStr(settings.google_api_key),
         "max_output_tokens": settings.llm_max_tokens,
-        "max_retries": settings.llm_max_retries,
+        **_patience(settings, interactive),
     }
     # Same rule as Anthropic, for the same reason: Gemini 3 Flash uses fixed
     # sampling and discards a temperature it is sent, warning once per call

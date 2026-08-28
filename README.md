@@ -568,6 +568,37 @@ with the error. Silence is never the answer to anything, because silence reads
 exactly like success: if handling an update fails anywhere, the failure is sent
 into the chat rather than only into the log.
 
+### When the model runs out
+
+The free Gemini tier allows **20 requests per day per model**, and the desk
+spends one on routing before it spends one on answering. Running out is normal,
+not a fault — but it used to look like a dead bot, because `LLM_MAX_RETRIES` is
+10 with no deadline. That is the right budget for a nightly close, where waiting
+out a rate limit beats failing the books, and exactly the wrong one for a chat:
+the listener sat in backoff for minutes, saying nothing and reading nothing.
+
+Anything a person is waiting on now uses `LLM_INTERACTIVE_MAX_RETRIES` (1) and
+`LLM_INTERACTIVE_TIMEOUT` (25s) instead, and reports the failure in the owner's
+terms rather than the provider's:
+
+> I have used up today's free quota with the language model, so I cannot think
+> about that until it resets.
+>
+> /run &lt;name&gt;, /brief, /pending and /agents all still work — none of them need
+> the model.
+>
+> The free tier counts per model, so pointing `GOOGLE_MODEL_CONVERSATIONAL` at a
+> different one in .env buys another day's worth immediately.
+
+`restaurant-ai doctor` catches this before you hit it in the chat, because it
+actually calls the model rather than checking that a key is present — a correct
+key and a spent quota are indistinguishable from the settings, and only one of
+them can answer a question.
+
+The bot also sends a typing indicator the moment a message arrives. Thinking and
+being dead look identical from a phone, and that bubble is the cheapest way to
+tell them apart.
+
 ### "No such command"
 
 Almost never a missing command — a checkout that was pulled and an install that

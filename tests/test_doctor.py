@@ -224,3 +224,56 @@ class TestKnowingWhatIsRunning:
         described = cli._describe_install()
         assert "installed copy, not a checkout" in described
         assert "pip install -e ." in described
+
+
+class TestConfiguredIsNotWorking:
+    """A right key and a spent free tier look identical from the settings."""
+
+    def test_the_model_is_actually_called(self, db, monkeypatch):
+        called = {}
+
+        class Recorder:
+            def invoke(self, messages):
+                called["asked"] = True
+
+                class Response:
+                    content = "ok"
+
+                return Response()
+
+        monkeypatch.setattr(
+            "restaurant_ai.kernel.llm.describe_provider",
+            lambda: {"provider": "google", "conversational": "gemini-3.5-flash"},
+        )
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
+        report = diagnose()
+
+        assert called.get("asked"), "doctor must ask the model, not just read settings"
+        model = next(c for c in report.checks if c.name == "language model")
+        assert model.ok and "answering" in model.detail
+
+    def test_an_exhausted_quota_fails_the_check_with_its_fix(self, db, monkeypatch):
+        monkeypatch.setattr(
+            "restaurant_ai.kernel.llm.describe_provider",
+            lambda: {"provider": "google", "conversational": "gemini-3.5-flash"},
+        )
+        monkeypatch.setattr(
+            "restaurant_ai.kernel.llm.get_model",
+            lambda tier, **kw: (_ for _ in ()).throw(RuntimeError("429 RESOURCE_EXHAUSTED")),
+        )
+        report = diagnose()
+        model = next(c for c in report.checks if c.name == "language model")
+        assert not model.ok
+        assert "free quota" in model.fix
+
+    def test_a_page_of_provider_json_is_trimmed_to_one_line(self, db, monkeypatch):
+        monkeypatch.setattr(
+            "restaurant_ai.kernel.llm.describe_provider",
+            lambda: {"provider": "google", "conversational": "gemini-3.5-flash"},
+        )
+        monkeypatch.setattr(
+            "restaurant_ai.kernel.llm.get_model",
+            lambda tier, **kw: (_ for _ in ()).throw(RuntimeError("x" * 4000)),
+        )
+        for line in render(diagnose()).splitlines():
+            assert len(line) < 250
