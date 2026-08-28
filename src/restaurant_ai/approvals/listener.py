@@ -68,6 +68,8 @@ def handle_update(update: dict[str, Any]) -> str | None:
         data = (update["callback_query"] or {}).get("data", "")
         if data.startswith(("run:", "drop:")):
             return handle_run_press(update["callback_query"])
+        if data.startswith(("sold:", "nosold:")):
+            return handle_sold_press(update["callback_query"])
 
     interaction = parse_callback(update)
     if interaction is None:
@@ -120,6 +122,8 @@ TELL ME
   I work out whose job it is and ask you to confirm before anything runs.
 
 COMMANDS
+  /sold ...    log what sold today
+               e.g. /sold 20 nasi lemak biasa, 35 teh tarik, 90 covers
   /run <name>  run that agent now, no guessing  (e.g. /run rain)
   /agents      who does what
   /brief       tonight's brief, right now
@@ -170,6 +174,8 @@ def handle_message(message: dict[str, Any]) -> str | None:
         reply = _agents_text()
     elif command == "/run":
         return _run_command(chat_id, text)
+    elif command == "/sold":
+        return _sold_command(chat_id, text)
     elif command:
         reply = f"I do not know {command}. Try /help."
     else:
@@ -323,6 +329,131 @@ def _run_now(chat_id: Any, agent: str, instruction: str) -> str:
         text = f"{spec.person}: {summary}"
     api("sendMessage", chat_id=chat_id, text=text[:3800])
     return f"ran {agent}{' (parked)' if outcome.interrupted else ''}"
+
+
+# What the owner said they sold, held between reading it back and the press
+# that confirms it. Losing it (a restart between the two) costs a re-type, never
+# a wrong write: the press finds nothing and says so.
+_PENDING_TAKINGS: dict[str, str] = {}
+
+
+def _sold_command(chat_id: Any, text: str) -> str:
+    """Read back what sold, in money, before writing any of it."""
+    from restaurant_ai.db.base import session_scope
+    from restaurant_ai.takings import read
+
+    said = text.split(maxsplit=1)[1].strip() if " " in text else ""
+    if not said:
+        api(
+            "sendMessage",
+            chat_id=chat_id,
+            text=(
+                "What sold? For example:\n\n"
+                "  /sold 20 nasi lemak biasa, 35 teh tarik, 40 roti kosong\n\n"
+                'Add "90 covers" if you counted them.'
+            ),
+        )
+        return "sold: nothing said"
+
+    with session_scope() as session:
+        reading = read(session, said)
+
+        if not reading.entries:
+            api("sendMessage", chat_id=chat_id, text="I could not find any dishes in that.")
+            return "sold: nothing understood"
+
+        lines = []
+        for entry in reading.resolved:
+            assert entry.item is not None
+            lines.append(f"  {entry.quantity} × {entry.item.name} — RM {entry.value:,.2f}")
+
+        problems = []
+        for entry in reading.unresolved:
+            if entry.quantity == 0:
+                problems.append(f'  "{entry.text}" — how many?')
+            elif entry.candidates:
+                shown = "; ".join(entry.candidates)
+                problems.append(f'  "{entry.text}" could be: {shown}')
+            else:
+                problems.append(f'  "{entry.text}" is not on the menu')
+
+        if problems:
+            body = "I could not record this yet:\n\n" + "\n".join(problems)
+            if lines:
+                body += "\n\nThe rest read fine:\n" + "\n".join(lines)
+            body += "\n\nNothing was written. Send it again with those fixed."
+            api("sendMessage", chat_id=chat_id, text=body)
+            return f"sold: {len(problems)} unresolved"
+
+        _PENDING_TAKINGS[str(chat_id)] = said
+        covers = f"\n  {reading.covers} covers" if reading.covers else ""
+        api(
+            "sendMessage",
+            chat_id=chat_id,
+            text=(
+                "Recording today as:\n\n"
+                + "\n".join(lines)
+                + covers
+                + f"\n\n  Total: RM {reading.total:,.2f}\n\nWrite it?"
+            ),
+            reply_markup={
+                "inline_keyboard": [
+                    [
+                        {"text": "Yes, record it", "callback_data": "sold:go"},
+                        {"text": "No", "callback_data": "nosold:go"},
+                    ]
+                ]
+            },
+        )
+    return f"sold: proposed {len(reading.resolved)} line(s)"
+
+
+def handle_sold_press(query: dict[str, Any]) -> str:
+    """The press that actually writes the day's takings."""
+    from restaurant_ai.db.base import session_scope
+    from restaurant_ai.takings import read, record
+
+    message = query.get("message") or {}
+    chat_id = (message.get("chat") or {}).get("id")
+    user_id = (query.get("from") or {}).get("id")
+
+    if not permitted(chat_id, user_id):
+        log.warning("ignored a takings press from outside the allow-list", chat=chat_id)
+        answer_callback(query.get("id", ""), "You are not authorised to record this.")
+        raise UnauthorisedPresser(f"chat={chat_id} user={user_id}")
+
+    action = (query.get("data") or "").split(":")[0]
+    said = _PENDING_TAKINGS.pop(str(chat_id), "")
+
+    if action == "nosold":
+        answer_callback(query.get("id", ""), "Left alone.")
+        api("sendMessage", chat_id=chat_id, text="Fine — nothing recorded.")
+        return "takings declined"
+
+    if not said:
+        answer_callback(query.get("id", ""), "I no longer have that.")
+        api(
+            "sendMessage",
+            chat_id=chat_id,
+            text="I have lost what that was — send the /sold line again.",
+        )
+        return "takings: nothing pending"
+
+    answer_callback(query.get("id", ""), "Recording.")
+    with session_scope() as session:
+        # Re-read against the menu as it is now, rather than trusting a summary
+        # built when the message arrived.
+        written = record(session, read(session, said))
+    api(
+        "sendMessage",
+        chat_id=chat_id,
+        text=(
+            f"Recorded {written['lines']} line(s), RM {written['total']} "
+            f"across {written['covers']} cover(s), as {written['order_number']}.\n\n"
+            "Camelia will close the day on it tonight."
+        ),
+    )
+    return f"recorded takings {written['order_number']}"
 
 
 def _agents_text() -> str:

@@ -594,3 +594,79 @@ class TestWhoMayInstruct:
         )
         with pytest.raises(listener.UnauthorisedPresser):
             listener.handle_update(press_run("stock_reorder", chat="111", user=222))
+
+
+class TestLoggingWhatSold:
+    """`/sold` — the way real trading gets in without a POS."""
+
+    @pytest.fixture
+    def real_menu(self, db):
+        from restaurant_ai.db.catalog_import import import_catalog
+
+        import_catalog(
+            db, "menu/the-great-invention-menu.xlsx", allow_uncosted=True, replace_menu=True
+        )
+        return db
+
+    def test_it_reads_the_day_back_in_money_before_writing(self, real_menu, telegram):
+        described = listener.handle_update(say("/sold 20 nasi lemak biasa, 35 teh tarik"))
+
+        assert described.startswith("sold: proposed")
+        card = [p for m, p in telegram if m == "sendMessage"][0]
+        assert "Nasi Lemak Biasa" in card["text"]
+        assert "RM 207.50" in card["text"]
+        assert card["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "sold:go"
+
+    def test_nothing_is_written_until_the_press(self, real_menu, telegram):
+        from restaurant_ai import demo
+
+        before = demo.real_orders(real_menu)
+        listener.handle_update(say("/sold 20 nasi lemak biasa"))
+        assert demo.real_orders(real_menu) == before
+
+    def test_the_press_records_it_as_real_trading(self, real_menu, telegram):
+        from restaurant_ai import demo
+
+        before = demo.real_orders(real_menu)
+        listener.handle_update(say("/sold 20 nasi lemak biasa"))
+        described = listener.handle_update(press_run("go", action="sold"))
+
+        assert described.startswith("recorded takings")
+        assert demo.real_orders(real_menu) == before + 1
+        assert any("Camelia will close" in p["text"] for m, p in telegram if m == "sendMessage")
+
+    def test_declining_writes_nothing(self, real_menu, telegram):
+        from restaurant_ai import demo
+
+        before = demo.real_orders(real_menu)
+        listener.handle_update(say("/sold 20 nasi lemak biasa"))
+        listener.handle_update(press_run("go", action="nosold"))
+
+        assert demo.real_orders(real_menu) == before
+        assert any("nothing recorded" in p["text"] for m, p in telegram if m == "sendMessage")
+
+    def test_an_ambiguous_dish_is_asked_about_not_guessed(self, real_menu, telegram):
+        described = listener.handle_update(say("/sold 12 nasi lemak"))
+
+        assert "unresolved" in described
+        text = [p for m, p in telegram if m == "sendMessage"][0]["text"]
+        assert "could be" in text
+        assert "Nothing was written" in text
+
+    def test_a_stranger_cannot_record_takings(self, real_menu, telegram):
+        with pytest.raises(listener.UnauthorisedPresser):
+            listener.handle_update(press_run("go", action="sold", chat="111", user=222))
+
+    def test_a_forgotten_confirmation_asks_for_it_again_rather_than_guessing(
+        self, real_menu, telegram
+    ):
+        """A restart between reading and pressing must cost a re-type, not a wrong write."""
+        listener._PENDING_TAKINGS.clear()
+        described = listener.handle_update(press_run("go", action="sold"))
+
+        assert described == "takings: nothing pending"
+        assert any("lost what that was" in p["text"] for m, p in telegram if m == "sendMessage")
+
+    def test_sold_with_nothing_after_it_shows_the_shape(self, real_menu, telegram):
+        listener.handle_update(say("/sold"))
+        assert "nasi lemak" in [p for m, p in telegram if m == "sendMessage"][0]["text"]

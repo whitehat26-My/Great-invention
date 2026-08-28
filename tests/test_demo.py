@@ -66,7 +66,10 @@ class TestCountingWhatWasInvented:
 
 
 class TestSayingSo:
-    def test_a_purely_seeded_database_says_none_of_it_is_real(self, db):
+    def test_a_purely_seeded_database_says_none_of_it_is_real(self, db, quiet_orders):
+        """States its own precondition: a database someone has logged real
+        takings into is not a purely seeded one, and should not be asked to
+        behave like one."""
         _order(db, "H260828-00002")
         said = demo.describe(db)
         assert said is not None
