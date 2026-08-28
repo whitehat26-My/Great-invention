@@ -58,6 +58,81 @@ def reset_db(
     typer.echo("Schema dropped. Run `make migrate && make seed`.")
 
 
+@app.command("menu-template")
+def menu_template(
+    out: str = typer.Argument("menu.xlsx", help="Where to write the workbook."),
+) -> None:
+    """Write the fill-in workbook for importing your real menu.
+
+    Its example rows are themselves a working import — try `import-menu` on the
+    untouched file to see the whole flow before typing anything.
+    """
+    from restaurant_ai.db.catalog_import import write_template
+
+    path = write_template(out)
+    typer.echo(f"\n  wrote {path}")
+    typer.echo("  Fill in the sheets (the ReadMe tab explains each column), then:")
+    typer.echo(f"  restaurant-ai import-menu {path}")
+
+
+@app.command("import-menu")
+def import_menu(
+    file: str = typer.Argument(..., help="A workbook from `menu-template`, filled in."),
+    replace_menu: bool = typer.Option(
+        False,
+        help="Deactivate every menu item whose sku is not in this file — the file becomes the menu.",
+    ),
+    dry_run: bool = typer.Option(False, help="Validate and cost everything, write nothing."),
+) -> None:
+    """Load suppliers, ingredients, recipes and menu items from a spreadsheet.
+
+    All-or-nothing: every problem is reported with its sheet and row, and
+    nothing is written until the whole file is clean. Ends by costing every
+    dish through the same recipe explosion the agents use.
+    """
+    from restaurant_ai.db.base import get_sessionmaker
+    from restaurant_ai.db.catalog_import import CatalogImportError, import_catalog
+
+    session = get_sessionmaker()()
+    try:
+        summary = import_catalog(session, file, replace_menu=replace_menu)
+    except CatalogImportError as exc:
+        session.rollback()
+        typer.echo(f"\n  {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except FileNotFoundError as exc:
+        session.rollback()
+        typer.echo(f"\n  {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    else:
+        if dry_run:
+            session.rollback()
+        else:
+            session.commit()
+    finally:
+        session.close()
+
+    verb = "would import" if dry_run else "imported"
+    typer.echo(f"\n  {verb}:")
+    for key, count in summary.counts.items():
+        typer.echo(f"    {key:12} {count}")
+    if summary.deactivated:
+        typer.echo(
+            f"    deactivated  {len(summary.deactivated)} ({', '.join(summary.deactivated)})"
+        )
+
+    typer.echo("\n  every dish costs out:")
+    typer.echo(f"    {'sku':16} {'price':>8} {'plate':>8} {'margin':>7}  allergens")
+    for c in summary.costings:
+        allergens = ", ".join(c["allergens"]) or "-"
+        typer.echo(
+            f"    {c['sku']:16} {c['price']:>8} {c['plate_cost']:>8} "
+            f"{c['margin_pct'] * 100:>6.1f}%  {allergens}"
+        )
+    if dry_run:
+        typer.echo("\n  dry run — nothing was written.")
+
+
 @app.command("menu-cost")
 def menu_cost(sku: str = typer.Argument(None, help="Limit to one SKU.")) -> None:
     """Show plate cost and margin for the menu, exploded through the recipe BOM."""
