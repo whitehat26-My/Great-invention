@@ -155,7 +155,8 @@ resilience. It refuses to start at all if Postgres is not reachable, with the
 command that fixes it, rather than filling the screen with five processes'
 tracebacks that all mean the same thing.
 
-It starts the database itself. If Postgres is not reachable and Docker Desktop
+It sets the database up itself — starting it, and applying migrations before
+anything reads it, which is the same `migrate` step compose runs. If Postgres is not reachable and Docker Desktop
 is installed and running, `up` runs `docker compose up -d postgres redis` for
 you and waits for Postgres to answer before starting anything that needs it.
 When it cannot, it says which of the three situations this machine is in — no

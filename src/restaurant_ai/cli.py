@@ -793,7 +793,7 @@ def up(
     open it for you at logon — DEPLOY.md has the exact line.
     """
     from restaurant_ai.config import get_settings
-    from restaurant_ai.services import ensure_database
+    from restaurant_ai.services import ensure_database, migrate_database
     from restaurant_ai.supervisor import default_children, run
 
     # The one dependency every child shares. If Docker is present and awake,
@@ -805,6 +805,15 @@ def up(
         typer.echo(f"\n  {message}", err=True)
         raise typer.Exit(code=1)
     typer.echo(f"\n  {message}")
+
+    # The same step compose runs as its `migrate` service, before anything
+    # reads the database. Without it a fresh machine starts four processes
+    # against an empty schema and reports it as four unrelated faults.
+    migrated, note = migrate_database()
+    if not migrated:
+        typer.echo(f"\n  {note}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"  {note}")
 
     settings = get_settings()
     typer.echo(f"\n  {settings.restaurant_name} — everything, in this window.")
