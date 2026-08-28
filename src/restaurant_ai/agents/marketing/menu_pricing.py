@@ -21,7 +21,7 @@ from restaurant_ai import clock
 from restaurant_ai.agents.common import active_menu_items, units_sold_between
 from restaurant_ai.config import get_settings
 from restaurant_ai.db.models import MenuItem, MenuItemPriceHistory
-from restaurant_ai.domain.costing import menu_item_cost
+from restaurant_ai.domain.costing import costed_menu_items, menu_item_cost
 from restaurant_ai.domain.pricing import (
     ItemPerformance,
     classify_menu,
@@ -51,8 +51,19 @@ class ProposeArgs(BaseModel):
 
 
 def _performances(session, business_date, window_days: int) -> list[ItemPerformance]:
+    """Only dishes we can actually cost.
+
+    A dish with no recipe costs zero, and zero cost is full margin — so left in,
+    every uncosted dish would rank above every real one as a Star, and would
+    drag the average margin up far enough to re-label honest dishes as
+    Plowhorses. Excluding them is the difference between an analysis that is
+    incomplete and one that is wrong; ``_uncosted`` reports how many, so
+    incomplete is never silent.
+    """
     start = business_date - timedelta(days=window_days)
     sold = units_sold_between(session, start, business_date)
+    items = list(active_menu_items(session))
+    costed = costed_menu_items(session, [item.id for item in items])
     return [
         ItemPerformance(
             menu_item_id=item.id,
@@ -63,15 +74,26 @@ def _performances(session, business_date, window_days: int) -> list[ItemPerforma
             units_sold=sold.get(item.id, ZERO),
             last_price_change_on=item.last_price_change_on,
         )
-        for item in active_menu_items(session)
+        for item in items
+        if item.id in costed
     ]
+
+
+def _uncosted(session) -> list[str]:
+    """Active dishes with no recipe — nothing can say what they earn."""
+    items = list(active_menu_items(session))
+    costed = costed_menu_items(session, [item.id for item in items])
+    return [item.name for item in items if item.id not in costed]
 
 
 def perceive(context: ToolContext) -> dict[str, Any]:
     session = context.session
     analysis = classify_menu(_performances(session, context.business_date, 28))
+    uncosted = _uncosted(session)
     return {
         "items_analysed": len(analysis.items),
+        "items_not_costed": len(uncosted),
+        "not_costed_examples": uncosted[:5],
         "total_contribution": str(analysis.total_contribution),
         "average_margin": str(analysis.avg_margin),
         "class_counts": {

@@ -229,3 +229,49 @@ class TestTheCli:
         assert {"ReadMe", "Suppliers", "Ingredients", "SubRecipes", "BOM", "Menu"} <= set(
             wb.sheetnames
         )
+
+
+class TestAMenuBeforeItsRecipes:
+    """A restaurant knows its prices long before it has costed a recipe.
+
+    Refusing the menu until every ingredient is priced keeps the real prices out
+    and leaves the demo ones in, which is worse than an incomplete catalog. The
+    price of admitting them is that "uncosted" must never quietly read as "free".
+    """
+
+    @staticmethod
+    def _orphan(wb):
+        ws = wb["BOM"]
+        for row in range(ws.max_row, 1, -1):
+            if ws.cell(row=row, column=1).value == "MNU-EXAMPLE":
+                ws.delete_rows(row)
+
+    def test_refusing_is_still_the_default(self, db, template):
+        """A catalog that claims to be complete should be."""
+        with pytest.raises(CatalogImportError, match="no BOM rows"):
+            import_catalog(db, _workbook(template, self._orphan))
+
+    def test_the_refusal_names_the_way_through(self, db, template):
+        with pytest.raises(CatalogImportError, match="allow_uncosted"):
+            import_catalog(db, _workbook(template, self._orphan))
+
+    def test_asked_for_it_loads_and_lists_them(self, db, template):
+        summary = import_catalog(db, _workbook(template, self._orphan), allow_uncosted=True)
+        assert "MNU-EXAMPLE" in summary.uncosted
+        # It is on the menu and can be ordered.
+        from restaurant_ai.db.models import MenuItem
+
+        item = db.query(MenuItem).filter_by(sku="MNU-EXAMPLE").one()
+        assert item.is_active
+
+    def test_an_uncosted_dish_is_never_reported_as_costed(self, db, template):
+        """The costing table is proof, so a dish it cannot prove stays out of it."""
+        summary = import_catalog(db, _workbook(template, self._orphan), allow_uncosted=True)
+        assert "MNU-EXAMPLE" not in {c["sku"] for c in summary.costings}
+
+    def test_a_costed_dish_alongside_still_costs_out(self, db, template):
+        """Admitting one uncosted dish must not weaken the proof for the rest."""
+        summary = import_catalog(db, template, allow_uncosted=True)
+        assert summary.costings
+        assert not summary.uncosted
+        assert all(c["plate_cost"] > 0 for c in summary.costings)

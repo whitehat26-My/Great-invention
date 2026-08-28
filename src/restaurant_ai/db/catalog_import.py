@@ -72,6 +72,7 @@ class ImportSummary:
     counts: dict[str, int] = field(default_factory=dict)
     costings: list[dict[str, Any]] = field(default_factory=list)
     deactivated: list[str] = field(default_factory=list)
+    uncosted: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -128,11 +129,24 @@ def _integer(row: dict[str, Any], key: str, errors: list[str], where: str) -> in
 # ---------------------------------------------------------------------------
 
 
-def import_catalog(session: Session, path: str | Path, replace_menu: bool = False) -> ImportSummary:
+def import_catalog(
+    session: Session,
+    path: str | Path,
+    replace_menu: bool = False,
+    allow_uncosted: bool = False,
+) -> ImportSummary:
     """Validate the whole workbook, then load it, then prove it costs out.
 
     Raises :class:`CatalogImportError` with every problem found; on any raise
     the session has had no lasting writes flushed past the caller's transaction.
+
+    ``allow_uncosted`` admits dishes with no bill of materials. A restaurant
+    knows its own prices long before it has costed a single recipe, and refusing
+    the menu until every ingredient is priced keeps the real prices out and
+    leaves the demo ones in — which is worse than an incomplete catalog. The
+    dishes are loaded, listed in ``summary.uncosted``, and excluded from margin
+    analysis rather than counted as costing nothing; off by default, because a
+    catalog that claims to be complete should be.
     """
     import openpyxl
 
@@ -452,9 +466,12 @@ def import_catalog(session: Session, path: str | Path, replace_menu: bool = Fals
     # stock. It is a picture of a dish, not a dish.
     for sku, recipe in menu_recipe_by_sku.items():
         if sku not in bom and not recipe.components:
+            if allow_uncosted:
+                summary.uncosted.append(sku)
+                continue
             errors.append(
                 f"Menu sku {sku!r} has no BOM rows — without one it cannot be costed, "
-                f"forecast, or deducted from stock."
+                f"forecast, or deducted from stock. Pass allow_uncosted to load it anyway."
             )
 
     if errors:
@@ -472,7 +489,7 @@ def import_catalog(session: Session, path: str | Path, replace_menu: bool = Fals
     from restaurant_ai.domain.costing import cost_breakdown, menu_item_allergens
 
     costing_errors: list[str] = []
-    for sku in sorted(menu_skus):
+    for sku in sorted(menu_skus - set(summary.uncosted)):
         item = session.execute(select(MenuItem).where(MenuItem.sku == sku)).scalar_one()
         try:
             breakdown = cost_breakdown(session, item.id)
