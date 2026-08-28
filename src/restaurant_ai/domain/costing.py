@@ -10,6 +10,7 @@ agree on what a dish actually contains.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -158,6 +159,22 @@ def menu_item_cost(session: Session, menu_item_id: str) -> Decimal:
         ZERO,
     )
     return Decimal(total).quantize(Decimal("0.01"))
+
+
+def costed_menu_items(session: Session, menu_item_ids: Iterable[str]) -> set[str]:
+    """Those of ``menu_item_ids`` that actually have a recipe to cost.
+
+    ``menu_item_cost`` answers zero for a dish with no bill of materials,
+    because summing nothing is zero. That is arithmetically right and
+    commercially catastrophic: zero cost is full margin, so an uncosted dish
+    outranks every real one as a Star and drags the average margin up with it,
+    re-labelling honest dishes as Plowhorses on the way past. Sold, it
+    contributes nothing to COGS and understates food cost for the whole day.
+
+    So anything that reasons about margin has to be able to tell "this costs
+    nothing" from "nobody has told us what this costs". This is that question.
+    """
+    return {item_id for item_id in menu_item_ids if explode_menu_item(session, item_id, 1)}
 
 
 def cost_breakdown(session: Session, menu_item_id: str) -> CostBreakdown:

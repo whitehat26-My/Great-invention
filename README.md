@@ -336,33 +336,41 @@ which model answered — so what a day actually cost is a query, not an estimate
 
 ## Putting your real menu in
 
-Every number the agents produce is computed from the catalog — recipes explode
-into ingredient demand, costs roll up into margins, margins into Irma's
-classifications and Camelia's verdicts. Until the catalog is yours, it is all
-demo data. The way in is a spreadsheet:
+`restaurant-ai menu-template menu.xlsx` writes the fill-in workbook; its example
+rows are themselves a valid import, so the untouched file demonstrates the whole
+flow before you type anything. Fill it in and `restaurant-ai import-menu menu.xlsx`
+loads suppliers, ingredients, sub-recipes, bills of materials and menu items.
 
-```bash
-restaurant-ai menu-template menu.xlsx   # writes the fill-in workbook
-# fill in the sheets — the ReadMe tab explains every column
-restaurant-ai import-menu menu.xlsx --dry-run   # validate + cost, write nothing
-restaurant-ai import-menu menu.xlsx             # load it
-restaurant-ai import-menu menu.xlsx --replace-menu   # ...and retire dishes not in the file
-```
+All-or-nothing: every problem is reported with its sheet and row, and nothing is
+written until the file is clean. It ends by costing every dish through the same
+recipe explosion the agents use — a dish that cannot be costed aborts the
+import, rather than being discovered at six in the morning.
 
-The template's example rows are themselves a working import — run `import-menu`
-on the untouched file to see the whole flow. Two properties worth knowing:
+### A menu before its recipes
 
-- **All-or-nothing.** Every problem is reported at once, each with its sheet
-  and row, and nothing loads until the file is clean. A half-imported catalog
-  is worse than none.
-- **It ends with proof.** Every dish is costed through the same recipe
-  explosion the agents use, and the import prints plate cost, margin and
-  derived allergens per dish. A dish that cannot be costed aborts the import.
+A restaurant knows its own prices long before it has costed a single recipe.
+Refusing the menu until every ingredient is priced keeps the real prices out and
+leaves the demo ones in, which is worse than an incomplete catalog — so
+`--allow-uncosted` loads dishes with no bill of materials.
 
-Re-importing the same file is a no-op; re-importing an edited one updates in
-place. Prices, recipes and packs change — the file stays the source of truth.
+The price of admitting them is that **"uncosted" must never quietly read as
+"free"**. `menu_item_cost` answers zero for a dish with no recipe, because
+summing nothing is zero, and that is the most expensive kind of correct:
 
----
+- **Zero cost is full margin.** Left in Irma's analysis, the dish nobody has
+  costed outranks every real one as a Star, and drags the average margin up far
+  enough to re-label honest dishes as Plowhorses. `costed_menu_items` is the
+  question "can this be costed at all?", and uncosted dishes are excluded from
+  the analysis and *counted* in `items_not_costed` — incomplete is acceptable,
+  silently incomplete is not.
+- **Sold, it adds nothing to COGS.** Camelia's food cost, prime cost and every
+  verdict built on them would be understated, always in the flattering
+  direction. The report now carries `units_sold_without_a_recipe` and
+  `cogs_is_understated` alongside the number, so the figure reads as the floor
+  it is.
+
+Refusing remains the default: a catalog that claims to be complete should be.
+
 
 ## Connecting Telegram
 

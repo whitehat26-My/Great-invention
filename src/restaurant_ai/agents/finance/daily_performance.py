@@ -29,7 +29,11 @@ from restaurant_ai.db.models import (
     StockMovement,
     TimeEntry,
 )
-from restaurant_ai.domain.costing import cost_of_requirement, explode_many
+from restaurant_ai.domain.costing import (
+    cost_of_requirement,
+    costed_menu_items,
+    explode_many,
+)
 from restaurant_ai.domain.reconciliation import compute_metrics
 from restaurant_ai.events import Event, Topic, publish
 from restaurant_ai.kernel.registry import register
@@ -86,6 +90,14 @@ def compile_report(context: ToolContext, business_date: str | None = None) -> di
 
     sold = units_sold_on(session, day)
     cogs = cost_of_requirement(session, explode_many(session, sold))
+
+    # A dish with no recipe explodes to nothing and so contributes nothing to
+    # COGS. Sold in volume that understates food cost, prime cost and every
+    # verdict built on them — and it does it silently, in the direction that
+    # makes the day look better. Count what was sold blind, so the number can
+    # carry its own caveat instead of quietly being wrong.
+    costed = costed_menu_items(session, list(sold))
+    uncosted_units = sum((units for item_id, units in sold.items() if item_id not in costed), ZERO)
 
     labour = sum(
         (
@@ -191,6 +203,10 @@ def compile_report(context: ToolContext, business_date: str | None = None) -> di
         "average_check": str(metrics.average_check),
         "cogs": str(metrics.cogs),
         "food_cost_pct": f"{metrics.food_cost_pct * 100:.1f}%",
+        # Stated whenever it is not zero: without it the food-cost figure above
+        # reads as fact when it is a floor.
+        "units_sold_without_a_recipe": str(uncosted_units),
+        "cogs_is_understated": uncosted_units > 0,
         "labour_cost": str(metrics.labour_cost),
         "labour_pct": f"{metrics.labour_pct * 100:.1f}%",
         "prime_cost": str(metrics.prime_cost),

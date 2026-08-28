@@ -171,19 +171,30 @@ def import_menu(
         help="Deactivate every menu item whose sku is not in this file — the file becomes the menu.",
     ),
     dry_run: bool = typer.Option(False, help="Validate and cost everything, write nothing."),
+    allow_uncosted: bool = typer.Option(
+        False,
+        help="Load dishes that have no recipe yet. They are listed, and left out of "
+        "margin analysis rather than counted as costing nothing.",
+    ),
 ) -> None:
     """Load suppliers, ingredients, recipes and menu items from a spreadsheet.
 
     All-or-nothing: every problem is reported with its sheet and row, and
     nothing is written until the whole file is clean. Ends by costing every
     dish through the same recipe explosion the agents use.
+
+    A restaurant knows its own prices long before it has costed a recipe, so
+    --allow-uncosted loads the menu without one. Those dishes are named in the
+    output and excluded from margin work until a recipe arrives.
     """
     from restaurant_ai.db.base import get_sessionmaker
     from restaurant_ai.db.catalog_import import CatalogImportError, import_catalog
 
     session = get_sessionmaker()()
     try:
-        summary = import_catalog(session, file, replace_menu=replace_menu)
+        summary = import_catalog(
+            session, file, replace_menu=replace_menu, allow_uncosted=allow_uncosted
+        )
     except CatalogImportError as exc:
         session.rollback()
         typer.echo(f"\n  {exc}", err=True)
@@ -209,8 +220,24 @@ def import_menu(
             f"    deactivated  {len(summary.deactivated)} ({', '.join(summary.deactivated)})"
         )
 
-    typer.echo("\n  every dish costs out:")
-    typer.echo(f"    {'sku':16} {'price':>8} {'plate':>8} {'margin':>7}  allergens")
+    if summary.uncosted:
+        typer.echo(f"\n  {len(summary.uncosted)} dish(es) have no recipe yet:")
+        for sku in summary.uncosted[:12]:
+            typer.echo(f"    {sku}")
+        if len(summary.uncosted) > 12:
+            typer.echo(f"    … and {len(summary.uncosted) - 12} more")
+        typer.echo(
+            "  These are on the menu and can be ordered, but nothing can say what they\n"
+            "  earn. Irma leaves them out of margin analysis rather than treating them\n"
+            "  as free, and Camelia flags the day's COGS as understated while they sell.\n"
+            "  Add rows to the BOM sheet and re-import to cost them."
+        )
+
+    if not summary.costings:
+        typer.echo("\n  nothing was costed — no dish in this file has a recipe.")
+    else:
+        typer.echo("\n  every costed dish:")
+        typer.echo(f"    {'sku':16} {'price':>8} {'plate':>8} {'margin':>7}  allergens")
     for c in summary.costings:
         allergens = ", ".join(c["allergens"]) or "-"
         typer.echo(
