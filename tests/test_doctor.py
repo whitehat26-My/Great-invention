@@ -18,7 +18,17 @@ pytestmark = pytest.mark.db
 
 
 @pytest.fixture
-def configured(monkeypatch):
+def configured(monkeypatch, tmp_path):
+    """A correctly configured machine: shell and .env saying the same thing.
+
+    The chdir matters. Settings are read from the working directory, and the
+    real project .env names a different bot — which is a genuine disagreement
+    for doctor to report, and nothing to do with the test's subject.
+    """
+    (tmp_path / ".env").write_text(
+        "TELEGRAM_BOT_TOKEN=test-token\nTELEGRAM_CHAT_ID=998877\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "998877")
     reset_settings_cache()
@@ -310,6 +320,67 @@ class TestConfiguration:
 
         assert check is not None and check.ok
         assert str(tmp_path) in check.detail
+
+    def test_an_env_txt_is_named_because_explorer_hides_it(self, tmp_path, monkeypatch):
+        """Notepad's "save as .env" produces .env.txt, and Windows hides the .txt."""
+        (tmp_path / ".env.txt").write_text("LLM_PROVIDER=anthropic\n")
+        monkeypatch.chdir(tmp_path)
+        reset_settings_cache()
+
+        check = self._check(self._run(), "settings file")
+
+        assert check is not None and not check.ok
+        assert ".env.txt" in check.detail
+        assert "Rename-Item" in check.fix
+
+    def test_the_example_file_is_not_mistaken_for_a_near_miss(self, tmp_path, monkeypatch):
+        """Every checkout has .env.example; naming it as a candidate is noise."""
+        (tmp_path / ".env.example").write_text("LLM_PROVIDER=fake\n")
+        monkeypatch.chdir(tmp_path)
+        reset_settings_cache()
+
+        check = self._check(self._run(), "settings file")
+
+        assert check is not None and "found" not in check.detail
+
+    def test_a_shell_variable_disagreeing_with_the_file_is_reported(self, tmp_path, monkeypatch):
+        """The file is read, then overridden. Editing it can never help."""
+        (tmp_path / ".env").write_text("LLM_PROVIDER=anthropic\n")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("LLM_PROVIDER", "google")
+        reset_settings_cache()
+
+        check = self._check(self._run(), "environment")
+
+        assert check is not None and not check.ok
+        assert "LLM_PROVIDER=google" in check.detail
+        assert "the file says anthropic" in check.detail
+        reset_settings_cache()
+
+    def test_an_agreeing_environment_is_not_a_fault(self, tmp_path, monkeypatch):
+        """Compose passes every setting as an environment variable. That is normal."""
+        (tmp_path / ".env").write_text("LLM_PROVIDER=anthropic\n")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+        reset_settings_cache()
+
+        assert self._check(self._run(), "environment") is None
+        reset_settings_cache()
+
+    def test_a_disagreeing_secret_is_named_without_printing_it(self, tmp_path, monkeypatch):
+        """doctor output gets pasted into chats. It must not carry the key with it."""
+        (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=sk-ant-from-the-file\n")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-from-the-shell")
+        reset_settings_cache()
+
+        check = self._check(self._run(), "environment")
+
+        assert check is not None and not check.ok
+        assert "ANTHROPIC_API_KEY" in check.detail
+        assert "sk-ant-from-the-shell" not in check.detail
+        assert "sk-ant-from-the-file" not in check.detail
+        reset_settings_cache()
 
     def test_a_missing_env_says_every_setting_is_defaulted(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

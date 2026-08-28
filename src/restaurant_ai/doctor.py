@@ -41,32 +41,99 @@ class Diagnosis:
         self.checks.append(Check(name=name, ok=ok, detail=detail, fix=fix))
 
 
+def _read_env_file(path: Any) -> dict[str, str]:
+    """The file's own view of the settings, for comparison against the live ones.
+
+    Deliberately not a dotenv parser: no interpolation, no export, no multi-line
+    values. It exists to answer "does the environment disagree with the file",
+    and a line it cannot read is a line it should not have an opinion about.
+    """
+    found: dict[str, str] = {}
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return found
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        name = name.strip()
+        value = value.strip().strip("\"'")
+        if name.isidentifier():
+            found[name.upper()] = value
+    return found
+
+
 def _check_configuration(report: Diagnosis) -> None:
     """Which .env is being read, and does it say what the owner thinks it says?
 
-    ``env_file=".env"`` resolves against the *working directory*, not the project
-    folder, so running the same command from one folder up reads a different
-    file — or none — and every setting silently falls back to its default. The
-    symptom is a change to .env that appears to do nothing.
+    Three ways an edit to .env silently does nothing, all of them seen in the
+    wild, none of them producing an error:
 
-    The mismatch below is the other half. Putting ANTHROPIC_API_KEY in .env and
-    leaving LLM_PROVIDER=google is the natural thing to do halfway through
-    switching provider, it looks finished, and the only sign is a provider name
-    in a log line nobody reads.
+    - ``env_file=".env"`` resolves against the *working directory*, not the
+      project folder. Run from one folder up and a different file is read, or
+      none, and every setting falls back to its default.
+    - A real environment variable **outranks the file**. Once ``LLM_PROVIDER``
+      is set in the shell, the file is read and then overridden for the life of
+      that window, and editing it will never help.
+    - Windows hides known extensions, so "save as .env" in Notepad produces
+      ``.env.txt``, which looks right in Explorer and is invisible to the loader.
+
+    The provider mismatch below is the fourth. Putting ANTHROPIC_API_KEY in .env
+    and leaving LLM_PROVIDER=google is the natural halfway point of a switch, it
+    looks finished, and the only sign is a provider name in a log line nobody
+    reads.
     """
+    import os
     from pathlib import Path
 
     settings = get_settings()
-    env = Path.cwd() / ".env"
+    here = Path.cwd()
+    env = here / ".env"
     if env.exists():
         report.add("settings file", True, f"reading {env}")
     else:
-        report.add(
-            "settings file",
-            False,
-            f"no .env in {Path.cwd()} — every setting is at its default",
+        # Say what *is* there before saying what is not. A near miss is the
+        # likeliest explanation and the one hardest to see in Explorer.
+        near = sorted(
+            p.name for p in here.glob(".env*") if p.is_file() and p.name not in (".env.example",)
+        )
+        detail = f"no .env in {here} — every setting is at its default"
+        fix = (
             "Commands read `.env` from the folder you run them in. Change to the project "
-            "folder first, or copy .env there.",
+            "folder first, or copy .env there."
+        )
+        if near:
+            detail += f"; found {', '.join(near)}"
+            fix = (
+                f"{', '.join(near)} is not read — the file must be named exactly `.env`. "
+                "Windows hides known extensions, so a file saved from Notepad is usually "
+                "`.env.txt`. Rename it with: Rename-Item .env.txt .env"
+            )
+        report.add("settings file", False, detail, fix)
+
+    # An environment variable outranking the file is normal — compose passes
+    # every setting that way. It is only a fault when the two *disagree*, which
+    # is the case where editing the file changes nothing and says nothing.
+    disagreeing = []
+    if env.exists():
+        for key, value in _read_env_file(env).items():
+            live = os.environ.get(key)
+            if live is not None and live != value:
+                # doctor output gets pasted into chats and issues. A secret is
+                # named, never quoted — on either side of the disagreement.
+                secret = "KEY" in key or "TOKEN" in key
+                shown = key if secret else f"{key}={live} (the file says {value})"
+                disagreeing.append(shown)
+    if disagreeing:
+        report.add(
+            "environment",
+            False,
+            f"the environment overrides .env: {', '.join(disagreeing)}",
+            "A shell variable outranks the file, so editing .env cannot change these. "
+            "Close this terminal and open a new one, then start again from the project "
+            "folder.",
         )
 
     keys = {"anthropic": settings.anthropic_api_key, "google": settings.google_api_key}
