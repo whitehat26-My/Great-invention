@@ -41,6 +41,46 @@ class Diagnosis:
         self.checks.append(Check(name=name, ok=ok, detail=detail, fix=fix))
 
 
+def _check_configuration(report: Diagnosis) -> None:
+    """Which .env is being read, and does it say what the owner thinks it says?
+
+    ``env_file=".env"`` resolves against the *working directory*, not the project
+    folder, so running the same command from one folder up reads a different
+    file — or none — and every setting silently falls back to its default. The
+    symptom is a change to .env that appears to do nothing.
+
+    The mismatch below is the other half. Putting ANTHROPIC_API_KEY in .env and
+    leaving LLM_PROVIDER=google is the natural thing to do halfway through
+    switching provider, it looks finished, and the only sign is a provider name
+    in a log line nobody reads.
+    """
+    from pathlib import Path
+
+    settings = get_settings()
+    env = Path.cwd() / ".env"
+    if env.exists():
+        report.add("settings file", True, f"reading {env}")
+    else:
+        report.add(
+            "settings file",
+            False,
+            f"no .env in {Path.cwd()} — every setting is at its default",
+            "Commands read `.env` from the folder you run them in. Change to the project "
+            "folder first, or copy .env there.",
+        )
+
+    keys = {"anthropic": settings.anthropic_api_key, "google": settings.google_api_key}
+    unused = [name for name, key in keys.items() if key and name != settings.llm_provider]
+    if unused:
+        report.add(
+            "provider",
+            False,
+            f"LLM_PROVIDER={settings.llm_provider}, but a key for {', '.join(unused)} is also set",
+            f"A key alone changes nothing — the provider chooses. Set "
+            f"LLM_PROVIDER={unused[0]} in .env and restart, or remove the unused key.",
+        )
+
+
 def _check_database(report: Diagnosis) -> None:
     try:
         from sqlalchemy import func, select
@@ -235,6 +275,7 @@ def _check_listener(report: Diagnosis, api: Any) -> None:
 def diagnose() -> Diagnosis:
     """Run every check. Never changes anything."""
     report = Diagnosis()
+    _check_configuration(report)
     _check_database(report)
     _check_trading_data(report)
     _check_model(report)

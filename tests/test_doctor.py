@@ -154,9 +154,17 @@ class TestTheChain:
         assert not chat.ok
         assert "ignored in silence" in chat.fix
 
-    def test_the_database_is_checked_before_anything_else(self, db):
-        """It is the first thing every other answer depends on."""
-        assert diagnose().checks[0].name == "database"
+    def test_the_settings_file_is_checked_before_the_database(self, db):
+        """Which .env was read decides *which* database the next check reports on.
+
+        The database used to be first, on the grounds that every other answer
+        depends on it. That is still true of every answer except this one: run
+        from the wrong folder, .env is not found, and a green database line is
+        a green line about a database nobody configured.
+        """
+        names = [c.name for c in diagnose().checks]
+        assert names[0] == "settings file"
+        assert names.index("settings file") < names.index("database")
 
 
 class TestTheCli:
@@ -277,3 +285,63 @@ class TestConfiguredIsNotWorking:
         )
         for line in render(diagnose()).splitlines():
             assert len(line) < 250
+
+
+class TestConfiguration:
+    """The two ways .env silently does nothing."""
+
+    def _run(self) -> Diagnosis:
+        from restaurant_ai.doctor import _check_configuration
+
+        report = Diagnosis()
+        _check_configuration(report)
+        return report
+
+    def _check(self, report: Diagnosis, name: str):
+        return next((c for c in report.checks if c.name == name), None)
+
+    def test_it_names_the_env_file_it_actually_read(self, tmp_path, monkeypatch):
+        """Relative to the working directory, which is the whole trap."""
+        (tmp_path / ".env").write_text("LLM_PROVIDER=fake\n")
+        monkeypatch.chdir(tmp_path)
+        reset_settings_cache()
+
+        check = self._check(self._run(), "settings file")
+
+        assert check is not None and check.ok
+        assert str(tmp_path) in check.detail
+
+    def test_a_missing_env_says_every_setting_is_defaulted(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        reset_settings_cache()
+
+        check = self._check(self._run(), "settings file")
+
+        assert check is not None and not check.ok
+        assert "default" in check.detail
+        assert "folder you run them in" in check.fix
+
+    def test_a_key_for_the_wrong_provider_is_flagged(self, tmp_path, monkeypatch):
+        """Half a provider switch looks exactly like a finished one."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("LLM_PROVIDER", "google")
+        monkeypatch.setenv("GOOGLE_API_KEY", "g")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-whatever")
+        reset_settings_cache()
+
+        check = self._check(self._run(), "provider")
+
+        assert check is not None and not check.ok
+        assert "anthropic" in check.detail
+        assert "LLM_PROVIDER=anthropic" in check.fix
+        reset_settings_cache()
+
+    def test_a_matching_key_is_not_flagged(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-whatever")
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+        reset_settings_cache()
+
+        assert self._check(self._run(), "provider") is None
+        reset_settings_cache()
