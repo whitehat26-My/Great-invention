@@ -237,7 +237,13 @@ def _check_model(report: Diagnosis) -> None:
                 [HumanMessage(content="Reply with the single word: ok")]
             )
             del reply
-            report.add(label, True, f"{name}, answering")
+            detail = f"{name}, answering"
+            if provider == "ollama":
+                # Asked after the call, so something is loaded to ask about.
+                placement = llm.ollama_placement()
+                if placement:
+                    detail += f", {placement}"
+            report.add(label, True, detail)
         except Exception as exc:
             from restaurant_ai.assistant import explain_model_failure
 

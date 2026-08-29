@@ -254,10 +254,18 @@ tools**, and Hermes is trained for tool calling. A general chat model that
 cannot emit a tool call does not fail — it runs the loop to its iteration limit
 doing nothing, and reports that it ran out of turns.
 
-On a 16GB machine the budget works out at roughly 4GB for Windows, 1GB for
-Postgres and Redis, 1.5GB for the four Python processes and 5GB for the model
-while it answers — about 11.5GB, with room for a browser. 8GB is where the 3B
-model becomes the right choice instead.
+**A graphics card changes the arithmetic and the speed together.** Ollama uses
+one if it finds one, and a model with 12GB of VRAM to live in answers in
+seconds rather than minutes *and* costs the machine's own memory almost nothing,
+because it is not resident there at all. Without one, budget roughly 4GB for
+Windows, 1GB for Postgres and Redis, 1.5GB for the four Python processes and
+5GB for the model — about 11.5GB of 16, with room for a browser. 8GB and no
+graphics card is where the 3B model becomes the right choice instead.
+
+`restaurant-ai doctor` says which it is, because the same command on the same
+machine means different things depending on the answer:
+
+    ok  language model  ollama — hermes3:latest, answering, on the graphics card
 
 Two honest limits:
 

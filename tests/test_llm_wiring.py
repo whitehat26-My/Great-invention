@@ -371,3 +371,57 @@ class TestTheModelStaysLoaded:
         llm.reset_model_cache()
 
         assert llm.get_model("conversational").keep_alive == "0"
+
+
+class TestWhereTheModelIsRunning:
+    """The single biggest fact about a local model's speed, and nothing said it.
+
+    The same machine answers in seconds on a graphics card and in minutes on the
+    processor. It also decides what the model costs in system memory: resident
+    in VRAM it is not competing with Postgres and four Python processes for the
+    machine's 16GB; on the CPU it is.
+    """
+
+    def _ps(self, monkeypatch, payload):
+        import httpx
+
+        class Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return payload
+
+        monkeypatch.setattr(httpx, "get", lambda url, timeout=5: Response())
+
+    def test_fully_on_the_gpu(self, ollama_env, monkeypatch):
+        self._ps(monkeypatch, {"models": [{"size": 5_000_000, "size_vram": 5_000_000}]})
+        assert llm.ollama_placement() == "on the graphics card"
+
+    def test_fully_on_the_cpu_warns_about_the_speed(self, ollama_env, monkeypatch):
+        self._ps(monkeypatch, {"models": [{"size": 5_000_000, "size_vram": 0}]})
+        said = llm.ollama_placement()
+        assert said is not None
+        assert "no graphics card in use" in said
+        assert "minutes, not seconds" in said
+
+    def test_a_split_names_the_share(self, ollama_env, monkeypatch):
+        """A model that does not fit is split, and the slow half sets the pace."""
+        self._ps(monkeypatch, {"models": [{"size": 10_000_000, "size_vram": 6_000_000}]})
+        said = llm.ollama_placement()
+        assert said is not None and "60% on the graphics card" in said
+
+    def test_nothing_loaded_is_not_a_fault(self, ollama_env, monkeypatch):
+        """Ollama unloads on a timer; a quiet machine has nothing to report."""
+        self._ps(monkeypatch, {"models": []})
+        assert llm.ollama_placement() is None
+
+    def test_an_unreachable_ollama_says_nothing_rather_than_raising(self, ollama_env, monkeypatch):
+        """This is a decoration on a check that has already succeeded."""
+        import httpx
+
+        def refuse(url, timeout=5):
+            raise httpx.ConnectError("refused")
+
+        monkeypatch.setattr(httpx, "get", refuse)
+        assert llm.ollama_placement() is None

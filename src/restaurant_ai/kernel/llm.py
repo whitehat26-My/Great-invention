@@ -254,6 +254,46 @@ def available_models() -> list[str]:
     raise FakeModelInUse("LLM_PROVIDER=fake: there are no models to list.")
 
 
+def ollama_placement() -> str | None:
+    """Whether the loaded model is on the graphics card or the processor.
+
+    It is the single biggest fact about how a local model performs, and nothing
+    anywhere says it. The same machine answers in seconds with a GPU and in
+    minutes without one, so an owner comparing "is this fast enough" is really
+    asking a question about placement that they have no way to see.
+
+    It also decides what the model costs in system memory. A model resident in
+    VRAM is not competing with Postgres and four Python processes for the 16GB
+    the machine has; a model on the CPU is.
+
+    None when nothing is loaded, which is not a fault — Ollama unloads on a
+    timer, and a machine that has been quiet has nothing to report.
+    """
+    import httpx
+
+    host = get_settings().ollama_host.rstrip("/")
+    try:
+        response = httpx.get(f"{host}/api/ps", timeout=5)
+        response.raise_for_status()
+        loaded = response.json().get("models") or []
+    except Exception:
+        return None
+    if not loaded:
+        return None
+
+    model = loaded[0]
+    total = int(model.get("size") or 0)
+    on_gpu = int(model.get("size_vram") or 0)
+    if not total:
+        return None
+    if on_gpu >= total:
+        return "on the graphics card"
+    if on_gpu:
+        # A model that does not fit is split, and the slow part sets the pace.
+        return f"split — {on_gpu * 100 // total}% on the graphics card, the rest on the processor"
+    return "on the processor (no graphics card in use — expect minutes, not seconds)"
+
+
 def _ollama_models() -> list[str]:
     """What is actually pulled onto this machine.
 
