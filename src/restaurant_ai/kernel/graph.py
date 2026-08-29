@@ -65,7 +65,7 @@ log = get_logger(__name__)
 
 
 def build_graph(spec: AgentSpec):
-    """Compile the graph for one agent. Identical shape for all 13."""
+    """Compile the graph for one agent. Identical shape for every one of them."""
 
     def perceive(state: AgentState) -> dict[str, Any]:
         if spec.perceive is None:
@@ -106,7 +106,7 @@ def build_graph(spec: AgentSpec):
         than a scripted imitation of reasoning.
 
         The condition used to be ``is_fake() or spec.autonomous is not None``,
-        and since all 13 agents define an autonomous path that meant the model
+        and since every agent defines an autonomous path that meant the model
         was never asked anything — setting a real API key changed nothing at
         all. Which path runs is now a property of the configured provider, as
         it reads.
@@ -479,7 +479,7 @@ def _use_model(spec: AgentSpec, state: AgentState) -> bool:
     """Which planner runs: the live model, or the agent's deterministic path.
 
     The configured provider decides. This used to also prefer the deterministic
-    path whenever an agent declared one — and all 13 do — so setting a real API
+    path whenever an agent declared one — and they all do — so setting a real API
     key changed precisely nothing and the model was never asked anything.
 
     ``_force_path`` in the trigger payload pins a single run either way, which is
@@ -546,9 +546,9 @@ def _system_prompt(spec: AgentSpec) -> str:
     "$49.80" for a dish priced in ringgit, because nothing in the prompt or the
     context said otherwise and a bare number defaults to dollars.
 
-    This belongs here rather than in the thirteen individual prompts. It is a
-    property of the deployment, not of any one agent's job, and thirteen copies
-    of it is thirteen chances to change twelve of them.
+    This belongs here rather than in each agent's own prompt. It is a property
+    of the deployment, not of any one agent's job, and a copy per agent is a
+    chance per agent to change all but one of them.
     """
     settings = get_settings()
     return (

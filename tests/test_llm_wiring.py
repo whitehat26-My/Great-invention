@@ -144,7 +144,7 @@ class TestGoogleProvider:
         """Gemini 3 Flash uses fixed sampling and discards one, warning per call.
 
         Same place Anthropic landed, for the same reason — and a warning on
-        every call from all thirteen agents is its own kind of broken.
+        every call from every agent is its own kind of broken.
         """
         assert llm.get_model("reasoning").temperature is None
 

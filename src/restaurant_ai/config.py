@@ -60,8 +60,8 @@ class Settings(BaseSettings):
     #
     # They are deliberately *different* Flash models. The free-tier quota is
     # `GenerateRequestsPerMinutePerProjectPerModel` — five requests a minute,
-    # counted per model — so putting both tiers on one id makes the thirteen
-    # agents queue behind each other for no reason.
+    # counted per model — so putting both tiers on one id makes the agents
+    # queue behind each other for no reason.
     google_api_key: str = ""
     google_model_reasoning: str = "gemini-3.6-flash"
     google_model_conversational: str = "gemini-3.5-flash"

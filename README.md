@@ -299,7 +299,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 pricing, reconciliation, scheduling, reorder. `MODEL_CONVERSATIONAL`
 (`claude-sonnet-5`) takes the guest-facing, high-volume ones.
 
-Either way, check the key and the request shape before setting thirteen agents
+Either way, check the key and the request shape before setting every agent
 going:
 
 ```bash

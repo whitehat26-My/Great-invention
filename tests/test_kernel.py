@@ -1,4 +1,4 @@
-"""The agent kernel: the graph every one of the 13 agents runs on.
+"""The agent kernel: the graph every agent runs on.
 
 The behaviour that matters most here is the approval gate. A gated action must
 prepare its effect, stop, survive being checkpointed, and only take effect once

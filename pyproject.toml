@@ -1,7 +1,7 @@
 [project]
 name = "restaurant-ai"
 version = "0.1.0"
-description = "Autonomous AI-driven restaurant operations: 13 agents across 6 departments"
+description = "Autonomous AI-driven restaurant operations: AI agents across 6 departments"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

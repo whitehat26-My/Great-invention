@@ -12,7 +12,7 @@ from restaurant_ai.logging_setup import configure_logging
 
 app = typer.Typer(
     name="restaurant-ai",
-    help="Autonomous restaurant operations: 11 agents across 6 departments.",
+    help="Autonomous restaurant operations: AI agents across 6 departments.",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -311,7 +311,7 @@ def menu_cost(sku: str = typer.Argument(None, help="Limit to one SKU.")) -> None
 
 @app.command("agents")
 def list_agents() -> None:
-    """List the 13 agents by department."""
+    """List every agent by department."""
     from restaurant_ai.kernel.registry import all_agents, departments
 
     agents = all_agents()
@@ -462,7 +462,7 @@ def live_check(
 
     Worth spending a few cents on before a full pass: it settles whether the
     credentials work and whether the request shape is one the configured models
-    actually accept, rather than discovering both thirteen agents into a run.
+    actually accept, rather than discovering either one partway through a full pass.
     """
     from langchain_core.messages import HumanMessage
 
@@ -724,7 +724,7 @@ def simulate(
 def _report_reasoning(outcome, transcript: bool = False) -> None:
     """Say which planner ran, what it cost, and optionally what it said.
 
-    The token counts are the point: an estimate of what thirteen agents cost to
+    The token counts are the point: an estimate of what a full pass costs to
     run is guesswork, and this is the measurement.
     """
     from langchain_core.messages import AIMessage, ToolMessage

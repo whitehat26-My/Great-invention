@@ -1,7 +1,7 @@
 """How an agent is declared.
 
 An agent is a prompt, a set of tools, a model and an approval policy. Nothing
-else varies between the 13, so this is the whole surface area of adding one.
+else varies between them, so this is the whole surface area of adding one.
 
 Approval policy lives on the tool rather than inside agent code, which means
 "drafting a purchase order needs a human" is a property of the action itself and
@@ -112,7 +112,7 @@ class AgentSpec:
     # is what a human sees: an approval that reads "Rain is asking for MYR
     # 172.50 of flour" is easier to act on at 6am than one that reads
     # "stock_reorder". Defaulted so a throwaway spec in a test need not invent
-    # one; the registry test is what holds the real thirteen to it.
+    # one; the registry test is what holds the real agents to it.
     person: str = ""
     tools: list[ToolSpec] = field(default_factory=list)
     model_tier: ModelTier = "conversational"

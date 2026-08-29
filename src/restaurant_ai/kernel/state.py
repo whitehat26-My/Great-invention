@@ -64,7 +64,7 @@ class ActionRecord:
 
 
 class AgentState(TypedDict, total=False):
-    """Shared across all 13 agents."""
+    """Shared across every agent."""
 
     # Identity
     agent_name: str

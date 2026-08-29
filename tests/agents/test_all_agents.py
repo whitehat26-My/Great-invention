@@ -1,6 +1,6 @@
 """Every agent, exercised on the shared kernel.
 
-The contract each of the 13 must satisfy: it runs to completion against the real
+The contract each of them must satisfy: it runs to completion against the real
 database, records an auditable run, and either finishes or parks at an approval
 gate with something a human can actually act on.
 """
@@ -387,3 +387,39 @@ class TestCurrencyReadsRight:
         settings = get_settings()
         assert settings.currency and settings.currency_symbol
         assert settings.currency != settings.currency_symbol
+
+
+class TestNobodyWritesTheCountDown:
+    """A count kept in prose stops being true without anything breaking.
+
+    Two agents were retired and the number 13 survived in nineteen places —
+    docstrings, the CLI's help, the API description a client reads — while the
+    dashboard and the map, which count what is actually registered, said 11.
+    Nothing failed. The docs were just quietly wrong for months.
+    """
+
+    def test_the_api_description_counts_rather_than_claims(self):
+        from restaurant_ai.api.main import app
+
+        assert app.description is not None
+        assert f"{len(all_agents())} agents" in app.description
+
+    def test_no_source_file_hardcodes_an_agent_count(self):
+        """Whatever the number is, writing it down is the mistake."""
+        import re
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2] / "src" / "restaurant_ai"
+        # "13 agents", "all 11 agents", "the thirteen agents" — a literal count
+        # attached to the word. Hours, prices and ids are not counts of agents.
+        # A number only claims something when it is attached to the noun. "the
+        # 60% target" and "a thirteen-hour day" are not agent counts.
+        written = re.compile(r"\b(\d+|eleven|twelve|thirteen|fourteen)\s+agents?\b", re.IGNORECASE)
+        offenders = []
+        for path in root.rglob("*.py"):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if "{len(" in line or 'f"' in line and "len(" in line:
+                    continue  # computed, which is the point
+                if written.search(line):
+                    offenders.append(f"{path.relative_to(root)}:{number}: {line.strip()}")
+        assert not offenders, "agent counts written into prose:\n" + "\n".join(offenders)

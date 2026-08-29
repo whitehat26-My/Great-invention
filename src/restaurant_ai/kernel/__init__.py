@@ -1,8 +1,8 @@
 """The shared agent framework.
 
-Every one of the 13 agents is the same compiled LangGraph graph, differing only
-by its AgentSpec: prompt, tools, model and approval policy. One framework,
-thirteen configurations.
+Every agent is the same compiled LangGraph graph, differing only by its
+AgentSpec: prompt, tools, model and approval policy. One framework, as many
+configurations as there are agents.
 """
 
 from restaurant_ai.kernel.spec import AgentSpec, ToolSpec

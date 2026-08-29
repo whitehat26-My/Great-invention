@@ -1,6 +1,6 @@
 """The owner's daily brief.
 
-Eleven agents write their work into the database and Camelia closes the day —
+The agents write their work into the database and Camelia closes the day —
 but the results were scattered across a CLI, a REST API and an approvals chat.
 Nobody stitched them into the one thing an owner actually reads.
 

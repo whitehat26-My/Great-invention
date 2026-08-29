@@ -1,7 +1,7 @@
 """The two command-line surfaces the live run depends on.
 
 `live-check` is what settles whether the credentials and the request shape work
-before thirteen agents are set going, and `run-agent --path` is what pins one
+before a full pass is set going, and `run-agent --path` is what pins one
 agent to one planner so the model's choice can be held against what the
 deterministic path would have done. Both are thin, and both would be found
 broken at the worst possible moment.
