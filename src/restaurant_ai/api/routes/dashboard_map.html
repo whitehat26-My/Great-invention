@@ -56,6 +56,42 @@
   .core-ring.spin2 { animation: spin 60s linear infinite reverse; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* A sweep, like a radar. The core is the one thing on this map that is always
+     working, and a static circle says the opposite. */
+  .core-sweep { fill: url(#sweep); transform-origin: 0 0; animation: spin 6s linear infinite; }
+
+  /* Packets riding the spokes. The flow dashes say a connection exists; these
+     say something went down it, which is the difference between a diagram of a
+     system and a picture of one running. */
+  .packet { fill: var(--s1); filter: drop-shadow(0 0 4px rgba(57,135,229,.9)); }
+
+  /* An aura in the agent's own status colour, so the room reads at a glance
+     from across the counter — before any label is legible. */
+  .aura { fill: none; stroke-width: 1.5; opacity: 0; animation: aura 3.2s ease-out infinite; }
+  @keyframes aura {
+    0%   { transform: scale(.85); opacity: .55; }
+    70%  { transform: scale(1.5);  opacity: 0; }
+    100% { transform: scale(1.5);  opacity: 0; }
+  }
+
+  /* Telemetry. Real numbers, monospaced, in the corner where a control room
+     puts them — and it is the same data the panel shows, not decoration. */
+  .telemetry { display: flex; gap: 18px; margin-left: auto; align-items: baseline;
+               font-family: ui-monospace, "Cascadia Mono", Menlo, monospace; font-size: 11px;
+               letter-spacing: .06em; color: var(--ink-3); }
+  .telemetry b { color: var(--ink-2); font-weight: 600; }
+  .telemetry .live { color: var(--good); }
+  .telemetry .wants { color: var(--warning); background: none; border: none; padding: 0;
+                      margin: 0; font-size: 11px; }
+
+  /* HUD corner brackets on the panel. */
+  aside::before, aside::after {
+    content: ""; position: absolute; width: 14px; height: 14px; pointer-events: none;
+    border-color: var(--s1); opacity: .5;
+  }
+  aside::before { top: 10px; left: 10px; border-top: 1px solid; border-left: 1px solid; }
+  aside::after { bottom: 10px; right: 10px; border-bottom: 1px solid; border-right: 1px solid; }
+
   .node { cursor: pointer; }
   .node circle.body { fill: var(--surface); stroke: var(--baseline); stroke-width: 1.4;
                       transition: stroke .15s, filter .15s; }
@@ -71,7 +107,7 @@
   .brain-sub   { fill: var(--ink-3); font-size: 10px; letter-spacing: .1em; }
 
   /* --- the detail panel --------------------------------------------------- */
-  aside { background: var(--panel); border-left: 1px solid var(--edge); backdrop-filter: blur(6px);
+  aside { position: relative; background: var(--panel); border-left: 1px solid var(--edge); backdrop-filter: blur(6px);
           padding: 22px 24px 40px; min-height: calc(100vh - 60px);
           transform: translateX(14px); opacity: 0; transition: all .25s cubic-bezier(.2,.7,.3,1); }
   aside.open { transform: none; opacity: 1; }
@@ -126,7 +162,13 @@
   .dept-list span { color: var(--ink-3); font-size: 12px; }
 
   @media (prefers-reduced-motion: reduce) {
-    .flow, .core-halo, .core-ring.spin, .core-ring.spin2 { animation: none; }
+    /* Everything that moves, stops. The map has to be readable by someone who
+       finds motion painful, and none of this carries meaning the numbers do
+       not also carry in words. */
+    .flow, .core-halo, .core-ring.spin, .core-ring.spin2,
+    .core-sweep, .aura, .packet { animation: none; }
+    .packet { display: none; }
+    .aura { opacity: .3; }
     aside { transition: none; }
   }
 </style>
@@ -134,6 +176,7 @@
 <body>
 <header>
   <h1 id="title">System map</h1>
+  <div class="telemetry" id="telemetry"></div>
   <a id="back" href="#">← dashboard</a>
 </header>
 
@@ -203,6 +246,11 @@ function draw(data) {
                                  style: "filter:drop-shadow(0 0 14px rgba(57,135,229,.35))" }));
   brain.append(svgel("circle", { r: 104, class: "core-ring spin",  style: "transform-origin:0 0" }));
   brain.append(svgel("circle", { r: 122, class: "core-ring spin2", style: "transform-origin:0 0" }));
+  // A wedge rather than a ring, so the eye reads a rotation and not a pulse.
+  brain.append(svgel("path", {
+    class: "core-sweep",
+    d: "M0,0 L122,0 A122,122 0 0,1 61,105.6 Z",
+  }));
   /* a small neural glyph: three layers of dots, connected */
   const layers = [[-26, 3], [0, 4], [26, 3]];
   const pts = layers.flatMap(([x, n], li) =>
@@ -221,6 +269,57 @@ function draw(data) {
   brain.append(bl, bs);
   svg.append(brain);
 
+  /* ------- packets ------- */
+  // One dot per spoke, travelling out and starting again. The flow dashes say a
+  // connection exists; these say something went down it, which is the whole
+  // difference between a diagram of a system and a picture of one running.
+  const packets = [];
+  function packet(x1, y1, x2, y2, delay, speed) {
+    const dot = svgel("circle", { class: "packet", r: 2.4, cx: x1, cy: y1 });
+    packets.push({ dot, x1, y1, x2, y2, t: -delay, speed });
+    return dot;
+  }
+
+  /* ------- the core's sweep ------- */
+  const defs = svgel("defs");
+  const grad = svgel("radialGradient", { id: "sweep" });
+  const stops = [["0%", ".00"], ["55%", ".00"], ["100%", ".18"]];
+  for (const [offset, opacity] of stops) {
+    grad.append(svgel("stop", { offset, "stop-color": "var(--s1)", "stop-opacity": opacity }));
+  }
+  defs.append(grad);
+  svg.append(defs);
+
+  /* ------- what the header reports ------- */
+  // The same numbers the panels show, in the corner where a control room puts
+  // them. Decoration that is also true: someone glancing at this learns
+  // whether anything is waiting on them without pressing a thing.
+  const everyone = depts.flatMap((d) => d.agents);
+  const live = everyone.filter((a) => a.status === "running").length;
+  const waiting = everyone.reduce((n, a) => n + (a.pending_approvals || 0), 0);
+  const failed = everyone.filter((a) => a.status === "failed").length;
+  // Ordered on the seconds the words were made from. Sorting the words puts
+  // "in 3 days" ahead of "in 4 hours", which is the sort of wrong that looks
+  // right until someone relies on it.
+  const next = everyone
+    .filter((a) => a.next_run_seconds != null)
+    .sort((a, b) => a.next_run_seconds - b.next_run_seconds)[0];
+  const soonest = next ? next.next_run : null;
+
+  const bar = $("telemetry");
+  bar.replaceChildren();
+  const cell = (label, value, cls) => {
+    const span = el("span", cls || "");
+    const b = el("b"); b.textContent = value;
+    span.append(document.createTextNode(label + " "), b);
+    bar.append(span);
+  };
+  cell("AGENTS", String(everyone.length));
+  cell("LIVE", String(live), live ? "live" : "");
+  if (waiting) cell("AWAITING YOU", String(waiting), "wants");
+  if (failed) cell("FAILED", String(failed));
+  if (soonest) cell("NEXT", soonest.replace("in ", ""));
+
   /* ------- departments + agents ------- */
   const step = (Math.PI * 2) / depts.length;
   depts.forEach((dept, di) => {
@@ -230,6 +329,7 @@ function draw(data) {
     links.append(svgel("path", { class: "link", d: `M${CX},${CY} L${dx},${dy}` }));
     links.append(svgel("path", { class: "flow", d: `M${CX},${CY} L${dx},${dy}`,
                                  style: `animation-delay:${di * 0.2}s` }));
+    links.append(packet(CX, CY, dx, dy, di * 0.5, 0.35));
 
     const dnode = svgel("g", { class: "node dept", transform: `translate(${dx},${dy})`,
                                tabindex: 0, role: "button" });
@@ -253,11 +353,23 @@ function draw(data) {
       const ax = CX + AGENT_R * Math.cos(aa), ay = CY + AGENT_R * Math.sin(aa);
       links.append(svgel("path", { class: "link", d: `M${dx},${dy} L${ax},${ay}`,
                                    "stroke-dasharray": "2 4" }));
+      // Busy agents send more often, so the map's rhythm is the restaurant's.
+      const busy = agent.status === "running" || agent.status === "awaiting_approval";
+      links.append(packet(dx, dy, ax, ay, di * 0.4 + ai * 0.7, busy ? 0.6 : 0.28));
 
       const node = svgel("g", { class: "node", transform: `translate(${ax},${ay})`,
                                 tabindex: 0, role: "button" });
-      node.append(svgel("circle", { class: "body", r: 27 }));
       const st = STATUS[agent.status] || STATUS.idle;
+      // Behind the body, so the ring reads as light coming off the node rather
+      // than a second outline on it. Idle agents get none: a map where every
+      // node pulses says nothing, and most of them are idle most of the day.
+      if (agent.status !== "idle") {
+        node.append(svgel("circle", {
+          class: "aura", r: 27, stroke: st.color,
+          style: `animation-delay:${(ai * 0.4 + di * 0.25).toFixed(2)}s`,
+        }));
+      }
+      node.append(svgel("circle", { class: "body", r: 27 }));
       node.append(svgel("circle", { cx: 19, cy: -19, r: 5, fill: st.color,
                                     stroke: "var(--surface)", "stroke-width": 2 }));
       const who = svgel("text", { "text-anchor": "middle", y: 4, class: "who" });
@@ -281,6 +393,8 @@ function draw(data) {
       svg.append(node);
     });
   });
+
+  animate(packets);
 
   const present = new Set(depts.flatMap((d) => d.agents.map((a) => a.status)));
   const legend = $("legend"); legend.replaceChildren();
@@ -429,6 +543,30 @@ function draw(data) {
 
     requestAnimationFrame(() => panel.classList.add("open"));
   }
+}
+
+function animate(packets) {
+  // One rAF for every packet rather than one animation each: sixty of them on
+  // their own timers is how a map that is meant to be left open all service
+  // becomes the reason a laptop's fan runs.
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  let last = performance.now();
+  const tick = (now) => {
+    const dt = Math.min((now - last) / 1000, 0.1);
+    last = now;
+    for (const p of packets) {
+      p.t += dt * p.speed;
+      if (p.t > 1) p.t -= 1 + Math.random() * 1.5;  // a pause, so they do not march in step
+      const shown = p.t >= 0;
+      p.dot.style.opacity = shown ? String(Math.min(1, (1 - p.t) * 2.2)) : "0";
+      if (shown) {
+        p.dot.setAttribute("cx", String(p.x1 + (p.x2 - p.x1) * p.t));
+        p.dot.setAttribute("cy", String(p.y1 + (p.y2 - p.y1) * p.t));
+      }
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
 }
 
 boot();

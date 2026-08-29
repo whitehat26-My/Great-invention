@@ -215,6 +215,21 @@ def _agent_history(session: Any, names: list[str]) -> dict[str, dict[str, Any]]:
     return history
 
 
+def _next_run_seconds(schedule: Any) -> int | None:
+    """Seconds until the next firing, for anything that has to compare them.
+
+    The words are for reading and cannot be ordered: "in 3 days" sorts before
+    "in 4 hours" on any property of the strings themselves, so a header that
+    reports the soonest firing needs the number the words were made from.
+    """
+    if schedule is None:
+        return None
+    try:
+        return max(0, int(schedule.remaining_estimate(clock.now()).total_seconds()))
+    except Exception:
+        return None
+
+
 def _next_run(schedule: Any) -> str | None:
     """When this fires next, in plain words.
 
@@ -278,6 +293,7 @@ async def map_data(request: Request) -> dict[str, Any]:
                 "last_summary": (run.summary or "")[:280] if run else "",
                 "last_run_at": run.started_at.isoformat() if run and run.started_at else None,
                 "next_run": _next_run(cron),
+                "next_run_seconds": _next_run_seconds(cron),
                 "recent": seen.get("recent", []),
                 "runs_7d": seen.get("runs_7d", 0),
                 "failed_7d": seen.get("failed_7d", 0),

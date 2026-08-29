@@ -128,6 +128,7 @@ class TestTheSystemMap:
                 # What it has actually been doing, as against how it is declared.
                 "last_run_at",
                 "next_run",
+                "next_run_seconds",
                 "recent",
                 "runs_7d",
                 "failed_7d",
@@ -193,6 +194,22 @@ class TestTheMapSaysWhetherItIsWorking:
         for agent in self._agents(client).values():
             if "not on a clock" in agent["schedule"]:
                 assert agent["next_run"] is None
+                assert agent["next_run_seconds"] is None
+
+    def test_the_next_firing_can_be_ordered(self, client):
+        """The header reports the soonest, and the words cannot be sorted:
+        "in 3 days" comes before "in 4 hours" on any property of the strings."""
+        for agent in self._agents(client).values():
+            seconds = agent["next_run_seconds"]
+            if seconds is None:
+                continue
+            assert isinstance(seconds, int) and seconds >= 0
+            # The words and the number have to describe the same moment.
+            said = agent["next_run"] or ""
+            if "hours" in said:
+                assert 5400 <= seconds < 172800
+            elif "days" in said:
+                assert seconds >= 172800
 
     def test_history_is_newest_first(self, db, client):
         """The panel reverses it to read left to right; the API owes it an order."""
