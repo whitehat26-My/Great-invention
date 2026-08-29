@@ -254,6 +254,11 @@ tools**, and Hermes is trained for tool calling. A general chat model that
 cannot emit a tool call does not fail — it runs the loop to its iteration limit
 doing nothing, and reports that it ran out of turns.
 
+On a 16GB machine the budget works out at roughly 4GB for Windows, 1GB for
+Postgres and Redis, 1.5GB for the four Python processes and 5GB for the model
+while it answers — about 11.5GB, with room for a browser. 8GB is where the 3B
+model becomes the right choice instead.
+
 Two honest limits:
 
 - **It is slower by a lot.** Seconds become minutes on a CPU. Fine at 06:00

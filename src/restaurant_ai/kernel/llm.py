@@ -220,6 +220,9 @@ def _build_ollama(settings: Any, name: str, interactive: bool = False) -> BaseCh
         "base_url": settings.ollama_host,
         "num_ctx": settings.ollama_context,
         "num_predict": settings.llm_max_tokens,
+        # Otherwise nearly every scheduled run pays to load 5GB from disk again,
+        # because they are an hour apart and Ollama forgets in minutes.
+        "keep_alive": settings.ollama_keep_alive,
         # Retries here are a client-side loop against a server on this machine.
         # A rate limit is impossible; the failures are "not running" and "model
         # not pulled", and retrying those ten times only delays the message

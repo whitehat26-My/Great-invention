@@ -352,3 +352,22 @@ class TestSplitProviders:
         assert llm.is_fake(interactive=True) is False
         reset_settings_cache()
         llm.reset_model_cache()
+
+
+class TestTheModelStaysLoaded:
+    """Ollama's default forgets the model in minutes; the agents run an hour
+    apart. Left alone, nearly every scheduled run pays 20-30 seconds to read
+    5GB off disk again, and the owner's first question of the afternoon looks
+    like a bot that has died."""
+
+    def test_it_is_asked_to_stay_resident(self, ollama_env):
+        model = llm.get_model("conversational")
+        assert model.keep_alive == get_settings().ollama_keep_alive
+
+    def test_it_can_be_told_to_unload_immediately(self, ollama_env, monkeypatch):
+        """Where memory is tight, 5GB held for an hour is the wrong trade."""
+        monkeypatch.setenv("OLLAMA_KEEP_ALIVE", "0")
+        reset_settings_cache()
+        llm.reset_model_cache()
+
+        assert llm.get_model("conversational").keep_alive == "0"

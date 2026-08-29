@@ -71,6 +71,20 @@ class Settings(BaseSettings):
     # an over-long prompt is truncated silently rather than refused — so the
     # agent loses its instructions and never learns that it did.
     ollama_context: int = 16384
+    # How long the model stays in memory after answering. Ollama's own default
+    # is a few minutes, which suits a laptop someone is using and not a machine
+    # running a restaurant: the agents are scheduled an hour apart, so nearly
+    # every run pays a cold start it need not.
+    #
+    # The trade is the whole of it. Holding the model costs ~5GB of RAM that
+    # nothing else can use; dropping it costs 20-30 seconds at the front of the
+    # next answer. That is free on a scheduled run nobody is waiting for, and it
+    # is the difference between a quick reply and an apparently dead bot on a
+    # question the owner just asked.
+    #
+    # "1h" keeps it resident on a machine with room to spare. Set "0" to unload
+    # immediately where memory is tight, or a longer duration where it is not.
+    ollama_keep_alive: str = "1h"
 
     # --- Anthropic ---
     anthropic_api_key: str = ""
