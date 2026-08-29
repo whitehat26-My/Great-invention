@@ -110,10 +110,12 @@ class TestItCannotAct:
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
         answer("anything", session=db)
 
-        system = captured["system"]
+        # The claim, not its wording: this must survive a rewrite of the prompt's
+        # voice, which is the thing most likely to change about it.
+        system = captured["system"].lower()
         assert "cannot change anything" in system
         assert "no tools" in system
-        assert "Never imply that" in system
+        assert "never imply" in system
 
     def test_it_is_told_the_currency_and_timezone(self, db, monkeypatch):
         """The order agent once quoted a ringgit dish in dollars. Not again."""
