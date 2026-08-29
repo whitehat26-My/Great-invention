@@ -434,8 +434,14 @@ def _check_listener(report: Diagnosis, api: Any) -> None:
         "listener",
         False,
         detail,
-        "Start it with `restaurant-ai telegram-listen`, and leave it running — "
-        "close that terminal and the bot goes deaf again.",
+        # `telegram-listen` starts the listener and nothing else, which was the
+        # only way once and is now the narrow one: the bot answers while beat
+        # never fires, so the morning prep, the nightly close and the brief all
+        # silently do not happen. `up` is the whole restaurant, and it is what
+        # this should have been naming since `up` existed.
+        "Start the restaurant with `restaurant-ai up`, and leave that window open — "
+        "close it and the bot goes deaf again. (`restaurant-ai telegram-listen` runs "
+        "the listener alone, which answers messages but never fires the schedule.)",
     )
 
 

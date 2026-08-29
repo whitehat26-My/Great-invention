@@ -75,7 +75,12 @@ class TestIsAnythingListening:
 
         assert not report.checks[0].ok
         assert "NOT RUNNING" in report.checks[0].detail
-        assert "telegram-listen" in report.checks[0].fix
+        # `up` first: the listener alone answers messages while beat never
+        # fires, so the nightly close and the brief silently do not happen.
+        assert "restaurant-ai up" in report.checks[0].fix
+        assert report.checks[0].fix.index("restaurant-ai up") < report.checks[0].fix.index(
+            "telegram-listen"
+        )
 
     def test_waiting_messages_are_counted_and_named(self):
         """ "I sent commands and nothing happened" — this is that, in one line."""
