@@ -177,6 +177,45 @@ def explain_model_failure(exc: Exception) -> str:
     detail = str(exc)
     lowered = detail.lower()
 
+    # A local model fails in ways a hosted one cannot, and shares vocabulary
+    # with ways it can. "Timed out" from Ollama is a CPU thinking, not a spent
+    # quota — so these are answered first or the advice below is confidently
+    # wrong about a machine that has no quota to spend.
+    from restaurant_ai.kernel import llm
+
+    if llm.provider_for() == "ollama" or llm.provider_for(interactive=True) == "ollama":
+        host = get_settings().ollama_host
+        if "connection" in lowered or "refused" in lowered or "connect" in lowered:
+            return (
+                f"The local model is not answering at {host}.\n\n"
+                "Ollama is either not installed or not running. Open it from the Start "
+                "menu, or check with `ollama list` in a new terminal — a window opened "
+                "before Ollama was installed will not have found it yet."
+            )
+        if "not found" in lowered or "no such model" in lowered or "try pulling" in lowered:
+            return (
+                "That model is not on this machine yet. Pull it once with "
+                "`ollama pull hermes3:8b` — about 5GB, and it only happens the first "
+                "time.\n\n"
+                "`restaurant-ai models` lists what is already here."
+            )
+        if "memory" in lowered or "out of memory" in lowered:
+            return (
+                "This machine does not have enough free memory for that model. A "
+                "smaller one fits: `ollama pull hermes3:3b`, then set "
+                "OLLAMA_MODEL_REASONING and OLLAMA_MODEL_CONVERSATIONAL to it in .env."
+            )
+        if "timeout" in lowered or "timed out" in lowered or "deadline" in lowered:
+            # No quota exists locally, so the hosted explanation below would be
+            # nonsense here. On a CPU this is simply how long it takes.
+            return (
+                "The local model did not finish in time. On a CPU that is normal rather "
+                "than broken — an answer can take minutes.\n\n"
+                "For questions you wait on, LLM_PROVIDER_INTERACTIVE=anthropic in .env "
+                "sends just the chat to a hosted model and leaves the scheduled agents "
+                "running free on this machine."
+            )
+
     if "429" in detail or "quota" in lowered or "resource_exhausted" in lowered:
         return (
             "I have used up today's free quota with the language model, so I cannot "

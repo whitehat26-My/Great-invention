@@ -192,40 +192,53 @@ def _check_trading_data(report: Diagnosis) -> None:
 
 
 def _check_model(report: Diagnosis) -> None:
+    """Ask each configured model something, because configured is not working.
+
+    A key that is right and a free tier that is spent look identical from the
+    settings; an Ollama host in .env looks identical whether or not anything is
+    listening on it. Only a real call tells them apart.
+
+    When a deployment splits the providers, *both* are called. Checking only the
+    one the owner talks to leaves the machine doing four fifths of the work
+    untested, and that is precisely the half whose failure is silent — the chat
+    keeps answering while every scheduled agent quietly stops thinking.
+    """
     from restaurant_ai.kernel import llm
 
     described = llm.describe_provider()
-    if described.get("provider") == "fake":
-        report.add(
-            "language model",
-            True,
-            "fake — agents run their code, but nothing reasons",
-            "Set LLM_PROVIDER and the matching API key in .env to use a real model.",
-        )
-        return
-    # Configured is not the same as working. A key that is right and a free tier
-    # that is spent look identical from the settings, and only one of them can
-    # answer a question — so ask it something and see.
-    name = f"{described.get('provider')} — {described.get('conversational', '?')}"
-    if described.get("interactive_provider"):
-        # The chat and the scheduled agents run on different machines entirely.
-        # A single line naming one of them would leave the other unchecked, and
-        # the untested half is the one nobody notices is broken.
-        name += (
-            f"; chat on {described['interactive_provider']} — {described.get('interactive', '?')}"
-        )
-    try:
-        from langchain_core.messages import HumanMessage
+    split = bool(described.get("interactive_provider"))
 
-        reply = llm.get_model("conversational", interactive=True).invoke(
-            [HumanMessage(content="Reply with the single word: ok")]
-        )
-        del reply
-        report.add("language model", True, f"{name}, answering")
-    except Exception as exc:
-        from restaurant_ai.assistant import explain_model_failure
+    # (label, interactive) — one entry unless the deployment splits them.
+    calls: list[tuple[str, bool]] = (
+        [("language model (agents)", False), ("language model (chat)", True)]
+        if split
+        else [("language model", True)]
+    )
 
-        report.add("language model", False, f"{name} — {exc}", explain_model_failure(exc))
+    for label, interactive in calls:
+        if llm.is_fake(interactive=interactive):
+            report.add(
+                label,
+                True,
+                "fake — agents run their code, but nothing reasons",
+                "Set LLM_PROVIDER and the matching API key in .env to use a real model.",
+            )
+            continue
+
+        provider = llm.provider_for(interactive=interactive)
+        name = f"{provider} — {llm.model_name('conversational', interactive=interactive)}"
+        try:
+            from langchain_core.messages import HumanMessage
+
+            reply = llm.get_model("conversational", interactive=interactive).invoke(
+                [HumanMessage(content="Reply with the single word: ok")]
+            )
+            del reply
+            report.add(label, True, f"{name}, answering")
+        except Exception as exc:
+            from restaurant_ai.assistant import explain_model_failure
+
+            report.add(label, False, f"{name} — {exc}", explain_model_failure(exc))
 
 
 def _check_telegram(report: Diagnosis) -> None:

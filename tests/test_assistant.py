@@ -10,7 +10,8 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
-from restaurant_ai.assistant import answer, build_snapshot
+from restaurant_ai.assistant import answer, build_snapshot, explain_model_failure
+from restaurant_ai.config import reset_settings_cache
 
 pytestmark = pytest.mark.db
 
@@ -554,3 +555,46 @@ class TestATimeoutOnAFreeTierIsUsuallyTheQuota:
         assert "doctor" in said
         # And what still works without any model at all.
         assert "/run" in said
+
+
+class TestLocalModelFailures:
+    """A machine under the counter fails differently from a hosted API.
+
+    It shares vocabulary with the hosted failures without sharing their causes:
+    "timed out" from a CPU grinding through an 8B model is not a spent quota,
+    and telling the owner to wait until tomorrow for a quota they do not have
+    sends them to fix the wrong thing.
+    """
+
+    @pytest.fixture
+    def local(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "ollama")
+        reset_settings_cache()
+        yield
+        reset_settings_cache()
+
+    def test_ollama_not_running_says_so_and_says_why_the_window_matters(self, local):
+        said = explain_model_failure(RuntimeError("connection refused to localhost:11434"))
+        assert "not installed or not running" in said
+        assert "opened before Ollama was installed" in said
+
+    def test_a_model_that_was_never_pulled_gets_the_pull_command(self, local):
+        said = explain_model_failure(RuntimeError('model "hermes3:8b" not found, try pulling it'))
+        assert "ollama pull" in said
+
+    def test_not_enough_memory_offers_a_smaller_model(self, local):
+        said = explain_model_failure(RuntimeError("model requires more system memory"))
+        assert "hermes3:3b" in said
+
+    def test_a_slow_local_answer_is_not_reported_as_a_spent_quota(self, local):
+        """The bug this exists for: there is no quota on this machine to spend."""
+        said = explain_model_failure(TimeoutError("Request timed out"))
+        assert "quota" not in said.lower()
+        assert "normal rather than broken" in said
+        assert "LLM_PROVIDER_INTERACTIVE" in said
+
+    def test_hosted_quota_advice_is_untouched(self):
+        """Every other deployment still gets the hosted explanation."""
+        reset_settings_cache()
+        said = explain_model_failure(RuntimeError("429 RESOURCE_EXHAUSTED"))
+        assert "today's free quota" in said

@@ -220,8 +220,16 @@ OLLAMA_MODEL_REASONING=hermes3:8b
 OLLAMA_MODEL_CONVERSATIONAL=hermes3:8b
 ```
 
-Install Ollama from ollama.com, then `ollama pull hermes3:8b` — about 5GB on
-disk and roughly the same in RAM while it answers.
+Installing it, on Windows, with no admin rights:
+
+```powershell
+Invoke-WebRequest -Uri "https://ollama.com/download/OllamaSetup.exe" -OutFile "OllamaSetup.exe"
+.\OllamaSetup.exe
+```
+
+Then **open a new terminal** before `ollama pull hermes3:8b` — the installer
+puts `ollama` on the PATH, and a window opened before that never sees it. The
+model is about 5GB on disk and roughly the same in RAM while it answers.
 
 Hermes is the right open model to reach for here because the agents **bind
 tools**, and Hermes is trained for tool calling. A general chat model that

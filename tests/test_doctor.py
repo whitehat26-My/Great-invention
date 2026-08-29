@@ -247,6 +247,22 @@ class TestKnowingWhatIsRunning:
 class TestConfiguredIsNotWorking:
     """A right key and a spent free tier look identical from the settings."""
 
+    @pytest.fixture(autouse=True)
+    def live_provider(self, monkeypatch):
+        """Configure a provider the way a deployment does.
+
+        These used to stub `describe_provider`, which stopped being enough when
+        the check started resolving the provider per call — the settings said
+        fake, so it reported fake and never rang the model that was stubbed to
+        fail. Setting the real knob keeps the test honest about the mechanism.
+        """
+        monkeypatch.setenv("LLM_PROVIDER", "google")
+        monkeypatch.setenv("GOOGLE_API_KEY", "not-a-real-key")
+        monkeypatch.delenv("LLM_PROVIDER_INTERACTIVE", raising=False)
+        reset_settings_cache()
+        yield
+        reset_settings_cache()
+
     def test_the_model_is_actually_called(self, db, monkeypatch):
         called = {}
 
@@ -415,4 +431,87 @@ class TestConfiguration:
         reset_settings_cache()
 
         assert self._check(self._run(), "provider") is None
+        reset_settings_cache()
+
+
+class TestASplitDeploymentIsCheckedOnBothSides:
+    """Four fifths of the calls go to the scheduled provider, and its failure is
+    the silent one: the chat keeps answering while every agent stops thinking."""
+
+    @pytest.fixture
+    def split(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("LLM_PROVIDER", "ollama")
+        monkeypatch.setenv("LLM_PROVIDER_INTERACTIVE", "anthropic")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-not-a-real-key")
+        reset_settings_cache()
+        yield
+        reset_settings_cache()
+
+    def test_both_providers_are_called(self, split, monkeypatch):
+        from restaurant_ai.doctor import _check_model
+        from restaurant_ai.kernel import llm
+
+        asked: list[bool] = []
+
+        class Answering:
+            def invoke(self, messages):
+                return type("R", (), {"content": "ok"})()
+
+        def spy(tier="conversational", *, interactive=False):
+            asked.append(interactive)
+            return Answering()
+
+        monkeypatch.setattr(llm, "get_model", spy)
+        report = Diagnosis()
+        _check_model(report)
+
+        assert sorted(asked) == [False, True], "both sides must actually be called"
+        assert [c.name for c in report.checks] == [
+            "language model (agents)",
+            "language model (chat)",
+        ]
+        assert all(c.ok for c in report.checks)
+
+    def test_a_dead_local_model_fails_even_though_the_chat_works(self, split, monkeypatch):
+        """The exact shape of the silent failure."""
+        from restaurant_ai.doctor import _check_model
+        from restaurant_ai.kernel import llm
+
+        class Answering:
+            def invoke(self, messages):
+                return type("R", (), {"content": "ok"})()
+
+        class Dead:
+            def invoke(self, messages):
+                raise RuntimeError("connection refused to localhost:11434")
+
+        monkeypatch.setattr(
+            llm,
+            "get_model",
+            lambda tier="conversational", *, interactive=False: (
+                Answering() if interactive else Dead()
+            ),
+        )
+        report = Diagnosis()
+        _check_model(report)
+
+        agents = next(c for c in report.checks if c.name == "language model (agents)")
+        chat = next(c for c in report.checks if c.name == "language model (chat)")
+        assert not agents.ok
+        assert chat.ok
+        assert "not installed or not running" in agents.fix
+
+    def test_one_provider_still_reports_one_line(self, db, monkeypatch, tmp_path):
+        """No new noise on every machine that has not split anything."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("LLM_PROVIDER", "fake")
+        monkeypatch.delenv("LLM_PROVIDER_INTERACTIVE", raising=False)
+        reset_settings_cache()
+
+        report = Diagnosis()
+        from restaurant_ai.doctor import _check_model
+
+        _check_model(report)
+        assert [c.name for c in report.checks] == ["language model"]
         reset_settings_cache()
