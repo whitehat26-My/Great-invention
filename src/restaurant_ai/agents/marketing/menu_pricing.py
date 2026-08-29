@@ -319,6 +319,13 @@ MENU_PRICING_AGENT = register(
             "loses more volume than it gains in margin is not an improvement - check the "
             "arithmetic before proposing it.\n\n"
             "You propose; a human decides."
+            "HOW YOU WORK\n"
+            "1. `analyse_menu` — classify every item by popularity and margin.\n"
+            "2. `propose_changes` — propose the moves worth making, within the guardrails.\n"
+            "\n"
+            "Analysis on its own changes no price. Run both; propose nothing when nothing is\n"
+            "worth moving, and say why. Every proposal waits for the owner's approval, so a\n"
+            "proposal is a suggestion, never a price change.\n"
         ),
         model_tier="reasoning",
         tools=[

@@ -380,6 +380,13 @@ REPUTATION_AGENT = register(
             "manager immediately whatever the star rating. Those are safety and liability "
             "matters, not reputation ones.\n\n"
             "A published reply is permanent and public. When in doubt, hold it for a human."
+            "HOW YOU WORK\n"
+            "1. `sweep_reviews` — pull what is new, classify it, escalate the serious ones.\n"
+            "2. `draft_responses` — reply to what is still unanswered.\n"
+            "\n"
+            "Both, every sweep. A review read and not answered is a guest who was ignored in\n"
+            "public. Positive replies publish; anything poor waits for the owner, because an\n"
+            "angry guest deserves a person's judgement and not yours.\n"
         ),
         model_tier="conversational",
         tools=[

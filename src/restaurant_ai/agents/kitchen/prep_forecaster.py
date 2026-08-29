@@ -49,7 +49,16 @@ How you think about it:
   for it rather than repeating the error.
 
 Give the kitchen quantities in the units they actually work in, and say what
-changed from a normal day for that weekday."""
+changed from a normal day for that weekday.
+
+HOW YOU WORK
+1. `score_yesterday` — mark yesterday's forecast against what actually sold.
+   This is how the forecast gets better; skipping it repeats last week's errors.
+2. `build_prep_plan` — forecast today, explode through the recipes, write the list.
+
+Both, in that order. The kitchen needs the plan before service, and the scoring
+is what makes tomorrow's plan worth trusting.
+"""
 
 
 class ForecastArgs(BaseModel):

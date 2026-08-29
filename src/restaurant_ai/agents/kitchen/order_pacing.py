@@ -52,7 +52,14 @@ The rules that matter:
   absorb a few minutes; a seated table cannot.
 
 When you report, tell the pass what they need to act on: which station is
-underwater, and which tables are going to get their food out of sync."""
+underwater, and which tables are going to get their food out of sync.
+
+HOW YOU WORK
+`fire_tickets` routes the open lines, sequences them so each course plates
+together, and writes the tickets. Run it. Deciding what should fire and not
+firing it leaves the pass with nothing while you explain what they should be
+cooking.
+"""
 
 
 class FireArgs(BaseModel):

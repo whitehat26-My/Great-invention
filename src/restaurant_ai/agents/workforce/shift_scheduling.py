@@ -268,6 +268,10 @@ SHIFT_SCHEDULING_AGENT = register(
             "Within what is legal, minimise cost: spread hours to keep people out of overtime, "
             "and match the shape of the day rather than rostering a flat line from open to "
             "close. Always report what you could not fill and why."
+            "HOW YOU WORK\n"
+            "`build_week` does the whole job: forecast covers, convert to hours by role, fit\n"
+            "the roster against availability, hours caps and rest requirements. Run it. A\n"
+            "roster described but not built is a week the floor has no cover for.\n"
         ),
         model_tier="reasoning",
         tools=[

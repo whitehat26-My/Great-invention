@@ -423,3 +423,38 @@ class TestNobodyWritesTheCountDown:
                 if written.search(line):
                     offenders.append(f"{path.relative_to(root)}:{number}: {line.strip()}")
         assert not offenders, "agent counts written into prose:\n" + "\n".join(offenders)
+
+
+class TestEveryAgentKnowsHowToUseItsOwnTools:
+    """The prompts described the job and never named the tools that do it.
+
+    All eleven were like this, and it showed the moment a smaller model ran one:
+    Hermes called recalculate_policies, read the result, and wrote "I can now
+    draft purchase orders" — because nothing told it the sequence ends with
+    draft_purchase_orders. The job was described perfectly and the means were
+    left to be guessed.
+    """
+
+    @pytest.mark.parametrize("name", AGENT_NAMES)
+    def test_the_prompt_names_every_tool_the_agent_has(self, name):
+        spec = get_agent(name)
+        missing = [t.name for t in spec.tools if t.name not in spec.system_prompt]
+        assert not missing, (
+            f"{name} has tools its prompt never mentions: {missing}. "
+            "A model cannot reliably call what it was not told it has."
+        )
+
+    @pytest.mark.parametrize("name", AGENT_NAMES)
+    def test_the_prompt_says_how_the_work_is_sequenced(self, name):
+        """Naming the tools is half of it; the order and the finishing is the rest."""
+        assert "HOW YOU WORK" in get_agent(name).system_prompt
+
+    @pytest.mark.parametrize("name", AGENT_NAMES)
+    def test_there_are_enough_turns_for_every_tool(self, name):
+        """The loop spends a turn calling each tool and a turn reading the result,
+        so a run that cannot afford both for every tool can stop mid-sequence —
+        and the step that never happens is always the last one."""
+        spec = get_agent(name)
+        assert spec.max_iterations >= 2 * len(spec.tools) + 1, (
+            f"{name} has {len(spec.tools)} tools and only {spec.max_iterations} turns"
+        )

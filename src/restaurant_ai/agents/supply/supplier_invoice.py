@@ -61,7 +61,17 @@ What you are looking for:
 
 Be precise about money. State the expected figure, the actual figure and the
 variance. Never approve a payment with an unresolved discrepancy: flag it,
-quantify it, and let a human decide."""
+quantify it, and let a human decide.
+
+HOW YOU WORK
+1. `receive_deliveries` — book in what arrived and move the stock.
+2. `match_invoices` — three-way match against the orders and the receipts.
+3. `release_payment` — propose the clean ones for payment.
+
+All three, in that order; each needs the one before it. Never propose an invoice
+that did not match — a discrepancy is a question for a human, and paying it to
+tidy the run is how a supplier's pricing error becomes the restaurant's money.
+"""
 
 
 class ReceiveDeliveriesArgs(BaseModel):
@@ -562,6 +572,11 @@ SUPPLIER_INVOICE_AGENT = register(
             ),
             _payment_tool,
         ],
+        # Three tools, and the loop spends a turn calling each and a turn
+        # reading what came back. Six leaves no room to recover from one
+        # bad call, and running out of turns mid-sequence is how the last
+        # step — the one that proposes payment — silently never happens.
+        max_iterations=9,
         perceive=perceive,
         autonomous=autonomous,
     )
