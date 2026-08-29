@@ -277,6 +277,41 @@ def _check_model(report: Diagnosis) -> None:
             report.add(label, False, f"{name} — {exc}", explain_model_failure(exc))
 
 
+def _token_shape(token: str) -> str:
+    """What is visibly wrong with a token, without ever printing it.
+
+    "The token is wrong or revoked" is true of every rejection and useful for
+    almost none of them. A token copied out of a chat message arrives with the
+    sentence's full stops attached, or a stray space, or half of it — and each
+    of those is a different fix from "get a new one from BotFather", which is
+    the advice that sends an owner round the loop they just completed.
+
+    BotFather issues ``<digits>:<35 characters>``. Everything below is a shape
+    that cannot be a token whatever BotFather said, so it can be reported before
+    blaming the token itself.
+    """
+    import re
+
+    if token != token.strip():
+        return "it has a space or newline at one end — the quotes caught more than the token"
+    if token.endswith("."):
+        return "it ends in a full stop — copied out of a sentence, the trailing dots came too"
+    if ":" not in token:
+        return "there is no colon in it — a token is <digits>:<letters>, so this is a fragment"
+
+    bot_id, _, secret = token.partition(":")
+    if not bot_id.isdigit():
+        return "the part before the colon is not a number — that half is the bot's id"
+    if len(secret) != 35:
+        return (
+            f"the part after the colon is {len(secret)} characters, and BotFather issues 35 "
+            "— it was cut short or something came with it"
+        )
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", secret):
+        return "it has characters a token never contains — something was pasted in with it"
+    return ""
+
+
 def _check_telegram(report: Diagnosis) -> None:
     """The bot, the chat, and whether anything is reading the chat."""
     from restaurant_ai.approvals.telegram import (
@@ -309,11 +344,20 @@ def _check_telegram(report: Diagnosis) -> None:
         )
         return
     except TelegramRejected as exc:
+        # Look at what was sent before blaming what BotFather issued: a malformed
+        # token and a revoked one are refused identically, and only one of them
+        # is fixed by fetching another.
+        malformed = _token_shape(settings.telegram_bot_token)
         report.add(
             "telegram bot",
             False,
             str(exc),
-            "The token is wrong or revoked. Get a fresh one from BotFather with /token.",
+            (
+                f"The token cannot be right: {malformed}. Fix that before asking "
+                "BotFather for another."
+                if malformed
+                else "The token is wrong or revoked. Get a fresh one from BotFather with /token."
+            ),
         )
         return
 

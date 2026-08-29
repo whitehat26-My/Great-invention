@@ -138,6 +138,10 @@ class TestTheChain:
         assert "network, not the token" in telegram.fix
 
     def test_a_revoked_token_is_reported_as_a_token_problem(self, db, configured, monkeypatch):
+        """A well-formed token that Telegram refuses: nothing to see in the shape,
+        so the advice is the one that applies — fetch another."""
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "8032262694:" + "A" * 35)
+        reset_settings_cache()
         monkeypatch.setattr(
             "restaurant_ai.approvals.telegram.describe_bot",
             lambda: (_ for _ in ()).throw(TelegramRejected("Unauthorized")),
@@ -145,6 +149,7 @@ class TestTheChain:
         report = diagnose()
         telegram = next(c for c in report.checks if c.name == "telegram bot")
         assert "revoked" in telegram.fix
+        reset_settings_cache()
 
     def test_a_registered_webhook_is_flagged_because_polling_refuses(
         self, db, configured, monkeypatch
@@ -552,3 +557,66 @@ class TestTheDashboardWouldServe:
 
         assert "sekret-value-nobody-should-see" not in check.detail
         assert "sekret-value-nobody-should-see" not in check.fix
+
+
+class TestWhyTheTokenCannotBeRight:
+    """ "Wrong or revoked" is true of every rejection and useful for almost none.
+
+    A token copied out of a chat message arrives with the sentence's full stops
+    attached, or a space, or half of it. Each has a different fix from "get a new
+    one from BotFather" — which is the advice that sends the owner back round the
+    loop they have just finished.
+    """
+
+    def _shape(self, token: str) -> str:
+        from restaurant_ai.doctor import _token_shape
+
+        return _token_shape(token)
+
+    GOOD = "8032262694:" + "A" * 35
+
+    def test_a_real_token_has_nothing_to_report(self):
+        assert self._shape(self.GOOD) == ""
+
+    def test_trailing_dots_from_a_sentence(self):
+        """The exact way a token pasted into chat arrives."""
+        said = self._shape(self.GOOD + "....")
+        assert "full stop" in said
+
+    def test_surrounding_whitespace(self):
+        assert "space or newline" in self._shape(f" {self.GOOD}\n")
+
+    def test_a_fragment_with_no_colon(self):
+        assert "no colon" in self._shape("8032262694AAFBIEAPIxgoFEeGVvWq4")
+
+    def test_a_secret_of_the_wrong_length_says_the_length(self):
+        said = self._shape("8032262694:" + "A" * 20)
+        assert "20 characters" in said
+        assert "35" in said
+
+    def test_characters_a_token_never_contains(self):
+        assert "never contains" in self._shape("8032262694:" + "A" * 34 + "!")
+
+    def test_a_bot_id_that_is_not_a_number(self):
+        assert "not a number" in self._shape("notanid:" + "A" * 35)
+
+    def test_it_never_returns_the_token(self):
+        """This becomes a doctor line, and doctor output gets pasted."""
+        token = self.GOOD + "...."
+        assert "AAAA" not in self._shape(token)
+
+    def test_the_check_prefers_the_shape_to_the_stock_advice(self, db, configured, monkeypatch):
+        from restaurant_ai.approvals.telegram import TelegramRejected
+
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", self.GOOD + "....")
+        reset_settings_cache()
+        monkeypatch.setattr(
+            "restaurant_ai.approvals.telegram.describe_bot",
+            lambda: (_ for _ in ()).throw(TelegramRejected("Unauthorized")),
+        )
+        report = diagnose()
+        bot = next(c for c in report.checks if c.name == "telegram bot")
+
+        assert "full stop" in bot.fix
+        assert "Get a fresh one" not in bot.fix
+        reset_settings_cache()
