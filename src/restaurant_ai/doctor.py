@@ -194,6 +194,33 @@ def _check_trading_data(report: Diagnosis) -> None:
     )
 
 
+def _check_dashboard(report: Diagnosis) -> None:
+    """Whether the dashboard would serve anyone, including the owner.
+
+    Unset, APPROVAL_API_KEY makes the dashboard, the system map and the approval
+    endpoints refuse every request — which is the right way round, because the
+    alternative is serving the restaurant's numbers to anyone who finds the
+    address. But nothing said so anywhere: the pages simply do not load, and
+    every other check is green.
+
+    It is also what `up --with-tunnel` refuses on, so an owner reaching for a
+    public address meets it there instead, at the moment they are furthest from
+    the file that fixes it.
+    """
+    settings = get_settings()
+    if settings.approval_api_key:
+        report.add("dashboard", True, "guarded by APPROVAL_API_KEY")
+        return
+    report.add(
+        "dashboard",
+        False,
+        "APPROVAL_API_KEY is not set — the dashboard and system map refuse to serve",
+        "This is a password you choose. Add a long random value to .env as "
+        "APPROVAL_API_KEY; the links then carry it, so treat them like the password "
+        "they are.",
+    )
+
+
 def _check_model(report: Diagnosis) -> None:
     """Ask each configured model something, because configured is not working.
 
@@ -373,6 +400,7 @@ def diagnose() -> Diagnosis:
     report = Diagnosis()
     _check_configuration(report)
     _check_database(report)
+    _check_dashboard(report)
     _check_trading_data(report)
     _check_model(report)
     _check_telegram(report)

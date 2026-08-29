@@ -25,12 +25,17 @@ def configured(monkeypatch, tmp_path):
     real project .env names a different bot — which is a genuine disagreement
     for doctor to report, and nothing to do with the test's subject.
     """
+    # A correctly configured machine has a dashboard key too: without one the
+    # dashboard and the system map refuse every request, which is not healthy.
     (tmp_path / ".env").write_text(
-        "TELEGRAM_BOT_TOKEN=test-token\nTELEGRAM_CHAT_ID=998877\n", encoding="utf-8"
+        "TELEGRAM_BOT_TOKEN=test-token\nTELEGRAM_CHAT_ID=998877\n"
+        "APPROVAL_API_KEY=a-long-random-value\n",
+        encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "998877")
+    monkeypatch.setenv("APPROVAL_API_KEY", "a-long-random-value")
     reset_settings_cache()
     yield
     reset_settings_cache()
@@ -515,3 +520,35 @@ class TestASplitDeploymentIsCheckedOnBothSides:
         _check_model(report)
         assert [c.name for c in report.checks] == ["language model"]
         reset_settings_cache()
+
+
+class TestTheDashboardWouldServe:
+    """Unset, the key makes every dashboard page refuse — correctly, and in
+    silence. The pages do not load and every other check is green."""
+
+    def _dashboard(self, monkeypatch, key: str):
+        from restaurant_ai.doctor import _check_dashboard
+
+        monkeypatch.setenv("APPROVAL_API_KEY", key)
+        reset_settings_cache()
+        report = Diagnosis()
+        _check_dashboard(report)
+        reset_settings_cache()
+        return report.checks[0]
+
+    def test_a_missing_key_is_reported_as_a_closed_dashboard(self, monkeypatch):
+        check = self._dashboard(monkeypatch, "")
+
+        assert not check.ok
+        assert "refuse to serve" in check.detail
+        assert "APPROVAL_API_KEY" in check.fix
+
+    def test_a_key_that_is_set_passes(self, monkeypatch):
+        assert self._dashboard(monkeypatch, "a-long-random-value").ok
+
+    def test_the_key_is_never_printed(self, monkeypatch):
+        """doctor output gets pasted. This one guards the restaurant's numbers."""
+        check = self._dashboard(monkeypatch, "sekret-value-nobody-should-see")
+
+        assert "sekret-value-nobody-should-see" not in check.detail
+        assert "sekret-value-nobody-should-see" not in check.fix
