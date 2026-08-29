@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 
+from restaurant_ai.config import reset_settings_cache
 from restaurant_ai.supervisor import (
     HEALTHY_AFTER_SECONDS,
     MAX_RAPID_DEATHS,
@@ -239,3 +240,77 @@ class TestNothingOutlivesTheSupervisor:
 
         assert spawned, "children were started"
         assert all(p.terminated for p in spawned)
+
+
+class TestTheTunnelIsSupervisedToo:
+    """The second window is the one that gets closed.
+
+    That is the whole reason `up` exists — the listener taught it, and the
+    tunnel had the same shape: a separate command, in its own window, that
+    someone has to remember. Nothing reports its absence, and the dashboard is
+    simply unreachable from outside with no error anywhere.
+    """
+
+    def test_it_is_absent_unless_asked_for(self):
+        assert "tunnel" not in default_children()
+
+    def test_asking_for_it_adds_it(self):
+        children = default_children(include_tunnel=True)
+        assert "tunnel" in children
+        assert children["tunnel"][1:] == ["-m", "restaurant_ai.tunnel"]
+
+    def test_it_runs_on_this_interpreter(self):
+        """Same virtualenv as everything else, no PATH lottery."""
+        import sys
+
+        assert default_children(include_tunnel=True)["tunnel"][0] == sys.executable
+
+
+class TestUpRefusesATunnelItCannotOpen:
+    """Before anything starts, not from a line buried in four processes' logs.
+
+    An owner who asked for a public address and did not get one should be told
+    so, rather than discovering it when the link never arrives on their phone.
+    """
+
+    def _run(self, monkeypatch, **env):
+        from typer.testing import CliRunner
+
+        from restaurant_ai.cli import app
+
+        monkeypatch.setattr(
+            "restaurant_ai.services.ensure_database", lambda: (True, "Postgres is up.")
+        )
+        monkeypatch.setattr(
+            "restaurant_ai.services.migrate_database", lambda: (True, "Schema is up to date.")
+        )
+        monkeypatch.setattr("restaurant_ai.supervisor.run", lambda children: 0)
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        reset_settings_cache()
+        return CliRunner().invoke(app, ["up", "--with-tunnel"])
+
+    def test_without_a_key_it_says_what_would_be_published(self, monkeypatch):
+        monkeypatch.setenv("APPROVAL_API_KEY", "")
+        monkeypatch.setattr("restaurant_ai.tunnel.installed", lambda: True)
+        result = self._run(monkeypatch)
+
+        assert result.exit_code == 1
+        assert "locked door" in result.output
+        reset_settings_cache()
+
+    def test_without_cloudflared_it_says_how_to_get_it(self, monkeypatch):
+        monkeypatch.setattr("restaurant_ai.tunnel.installed", lambda: False)
+        result = self._run(monkeypatch, APPROVAL_API_KEY="a-long-random-value")
+
+        assert result.exit_code == 1
+        assert "cloudflared is not installed" in result.output
+        reset_settings_cache()
+
+    def test_it_starts_when_both_are_in_place(self, monkeypatch):
+        monkeypatch.setattr("restaurant_ai.tunnel.installed", lambda: True)
+        result = self._run(monkeypatch, APPROVAL_API_KEY="a-long-random-value")
+
+        assert result.exit_code == 0
+        assert "public link goes to the approvals chat" in result.output
+        reset_settings_cache()

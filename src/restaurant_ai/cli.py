@@ -855,6 +855,11 @@ def up(
     with_api: bool = typer.Option(
         True, help="Also run the API (dashboard, system map, webhooks) on :8000."
     ),
+    with_tunnel: bool = typer.Option(
+        False,
+        "--with-tunnel",
+        help="Also publish the dashboard on a public HTTPS address, and send the link.",
+    ),
 ) -> None:
     """Run the whole restaurant in one window: listener, beat, worker, API.
 
@@ -864,12 +869,20 @@ def up(
     instantly every time is reported and given up on, because restarting a bad
     config forever is not resilience.
 
-    Close this window and the restaurant is off. On Windows, Task Scheduler can
-    open it for you at logon — DEPLOY.md has the exact line.
+    ``--with-tunnel`` adds the public address for the dashboard. It belongs here
+    rather than in a second window for the same reason everything else does: a
+    window someone has to remember is a window that gets closed, and nothing
+    reports its absence. Supervised, the quick tunnel's changing name stops
+    mattering — every restart sends the new link to the phone that opens it.
+
+    Close this window and the restaurant is off. On Windows, `restaurant-ai
+    install-startup` opens it for you at logon.
     """
     from restaurant_ai.config import get_settings
     from restaurant_ai.services import ensure_database, migrate_database
     from restaurant_ai.supervisor import default_children, run
+    from restaurant_ai.tunnel import install_hint
+    from restaurant_ai.tunnel import installed as cloudflared_installed
 
     # The one dependency every child shares. If Docker is present and awake,
     # starting it is our job, not the owner's; when it is not, say which of the
@@ -891,9 +904,36 @@ def up(
     typer.echo(f"  {note}")
 
     settings = get_settings()
+
+    # Both refusals happen before anything starts. Learning that the tunnel
+    # cannot run from a line in the middle of four processes' logs is how it
+    # goes unnoticed, and an owner who asked for a public address and did not
+    # get one should be told, not left to discover it when the link never
+    # arrives.
+    if with_tunnel:
+        if not settings.approval_api_key:
+            typer.echo(
+                "\n  --with-tunnel needs APPROVAL_API_KEY set: the dashboard refuses to\n"
+                "  serve without it, so a public address would publish a locked door.\n"
+                "  Put a long random value in .env first.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        if not cloudflared_installed():
+            typer.echo(f"\n  {install_hint()}", err=True)
+            raise typer.Exit(code=1)
+        if not with_api:
+            typer.echo(
+                "\n  --with-tunnel publishes the API, so it needs --with-api.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
     typer.echo(f"\n  {settings.restaurant_name} — everything, in this window.")
+    if with_tunnel:
+        typer.echo("  The dashboard's public link goes to the approvals chat when it opens.")
     typer.echo("  Ctrl-C stops the lot. Close the window and the restaurant is off.\n")
-    raise typer.Exit(code=run(default_children(include_api=with_api)))
+    raise typer.Exit(code=run(default_children(include_api=with_api, include_tunnel=with_tunnel)))
 
 
 @app.command("install-startup")

@@ -178,9 +178,15 @@ restaurant's window at every logon; `--remove` undoes it. (`schtasks` is the
 textbook answer and it replies "Access is denied" from a normal prompt — the
 Startup folder is yours already.)
 
-Then stop the laptop sleeping with the lid open: Settings → System → Power →
-"When plugged in, put my device to sleep" → **Never**. A sleeping laptop is the
-restaurant's brain off, however healthy every process was when the lid dimmed.
+Then stop the machine sleeping: Settings → System → Power → "When plugged in,
+put my device to sleep" → **Never**. A sleeping machine is the restaurant's
+brain off, however healthy every process was a moment before.
+
+On a desktop, set the BIOS to power on after a cut — usually "Restore on AC
+Power Loss" or "AC Back" under power management. Without it, the first power cut
+while nobody is in stops the restaurant until someone comes and presses the
+button, and `install-startup` cannot help because it needs a logon that never
+happens.
 
 This is the honest budget option, and its honest limits: the bot is only awake
 while that machine is on and on wifi. For always-on, the sections below.
@@ -349,8 +355,22 @@ domain and no certificate.
 # the single .exe, downloaded into the project folder, no admin needed
 Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
 
-restaurant-ai tunnel                            # leave it running
+restaurant-ai up --with-tunnel
 ```
+
+`--with-tunnel` puts the tunnel in the same window as everything else, under the
+same supervision, and that is the point rather than a convenience. A tunnel in
+its own window is a window someone has to remember, and the forgettable window
+is the one that gets closed — the lesson the listener already taught. Nothing
+reports its absence; the dashboard is simply unreachable from outside, with no
+error anywhere.
+
+Supervised, the quick tunnel's changing name stops being worth solving. It gets
+a new address on every restart and sends the new link to the phone that opens
+it, so the address being random costs nothing.
+
+`restaurant-ai tunnel` still runs one on its own, for a machine where the rest
+is already running under compose.
 
 `restaurant-ai tunnel` looks for `cloudflared` on the PATH *and* in the project
 folder, and runs it by full path — relying on Windows searching the working

@@ -150,3 +150,45 @@ def announce(address: str, key: str) -> bool:
         ),
     )
     return True
+
+
+def main() -> int:
+    """Run a tunnel until it is killed, announcing whatever address it gets.
+
+    This exists so the supervisor can own the tunnel like every other process,
+    as ``python -m restaurant_ai.tunnel``. Before it, the tunnel was a second
+    window the owner had to remember — which is exactly the failure `up` was
+    built to prevent, and the listener already taught us: the forgettable window
+    is the one that gets closed, and nothing reports its absence.
+
+    Supervised, the changing address stops being a problem worth solving. A
+    quick tunnel gets a new name every restart, but every restart also sends the
+    new link to the phone that is going to open it.
+    """
+
+    from restaurant_ai.config import get_settings
+
+    key = get_settings().approval_api_key
+    if not key:
+        # Refusing is the point: a public address for a system that will not
+        # serve is a locked door with a sign on it.
+        log.error("tunnel not started: APPROVAL_API_KEY is not set")
+        return 1
+
+    try:
+        process, address = start()
+    except TunnelUnavailable as exc:
+        log.error("tunnel unavailable", reason=str(exc))
+        return 1
+
+    announce(address, key)
+    print(f"  Dashboard:  {address}/dashboard?key={key}", flush=True)
+    try:
+        return int(process.wait())
+    except KeyboardInterrupt:
+        process.terminate()
+        return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - process entry point
+    raise SystemExit(main())
