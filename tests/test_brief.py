@@ -175,3 +175,57 @@ class TestTheCli:
         assert result.exit_code == 1
         assert "NOT sent" in result.output
         reset_settings_cache()
+
+
+class TestTheOwnersDiaryReachesThem:
+    """An approval is work an agent prepared for a person to decide. A reminder
+    is work only the owner can do, that no agent will ever pick up. Both belong
+    in the brief, because the brief is the one thing that reliably gets read —
+    and a reminder nobody reads is not a reminder."""
+
+    def test_something_due_appears_in_needs_you(self, db):
+        from datetime import timedelta
+
+        from restaurant_ai import reminders
+        from restaurant_ai.brief import build_brief
+        from restaurant_ai.db.models import Reminder
+
+        db.query(Reminder).delete()
+        today = clock.today()
+        reminders.add(db, "renew the halal certificate", today + timedelta(days=2))
+        db.flush()
+
+        brief = build_brief(db, today)
+
+        assert any("halal certificate" in line for line in brief.needs_you)
+        db.query(Reminder).delete()
+
+    def test_late_is_marked_as_late(self, db):
+        """The owner scanning a list at midnight needs the costly one to stand out."""
+        from datetime import timedelta
+
+        from restaurant_ai import reminders
+        from restaurant_ai.brief import build_brief
+        from restaurant_ai.db.models import Reminder
+
+        db.query(Reminder).delete()
+        today = clock.today()
+        reminders.add(db, "extinguisher service", today - timedelta(days=4))
+        db.flush()
+
+        brief = build_brief(db, today)
+
+        assert any(line.startswith("LATE — ") for line in brief.needs_you)
+        db.query(Reminder).delete()
+
+    def test_a_broken_diary_does_not_lose_the_rest_of_the_brief(self, db, monkeypatch):
+        from restaurant_ai import reminders
+        from restaurant_ai.brief import build_brief
+
+        monkeypatch.setattr(
+            reminders, "due", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no table"))
+        )
+        brief = build_brief(db, clock.today())
+
+        assert any("could not read the diary" in line for line in brief.needs_you)
+        assert brief.sections, "the rest of the brief still has to arrive"
