@@ -85,7 +85,7 @@ class TestItCannotAct:
 
                 return Response()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
 
         reply = answer("Order 50kg of prawns right now.", session=db)
@@ -105,7 +105,7 @@ class TestItCannotAct:
 
                 return Response()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
         answer("anything", session=db)
 
@@ -127,7 +127,7 @@ class TestItCannotAct:
 
                 return Response()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
         answer("what is the average check?", session=db)
 
@@ -153,7 +153,7 @@ class TestAnswering:
 
                 return Response()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
 
         reply = answer("tell me everything", session=db)
@@ -173,7 +173,7 @@ class TestAnswering:
 
                 return Response()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
 
         reply = answer("what is low?", session=db)
@@ -201,7 +201,7 @@ class TestRoutingAnInstruction:
 
                 return Response()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
 
     def test_a_question_routes_to_answering(self, db, monkeypatch):
@@ -254,7 +254,7 @@ class TestRoutingAnInstruction:
             def invoke(self, messages):
                 raise RuntimeError("429 quota exceeded")
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Broken())
         from restaurant_ai.assistant import route
 
@@ -281,7 +281,7 @@ class TestRoutingAnInstruction:
 
                 return Response()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
         from restaurant_ai.assistant import route
         from restaurant_ai.kernel.registry import all_agents
@@ -339,7 +339,7 @@ class TestWhenTheModelWillNotAnswer:
             asked["interactive"] = interactive
             return Recorder()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", spy)
 
         answer("how are we?", session=db)
@@ -359,7 +359,7 @@ class TestWhenTheModelWillNotAnswer:
             asked["interactive"] = interactive
             return Recorder()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", spy)
 
         from restaurant_ai.assistant import route
@@ -377,7 +377,7 @@ class TestWhenTheModelWillNotAnswer:
                     "Quota exceeded for generate_content_free_tier_requests, limit: 20"
                 )
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Exhausted())
 
         reply = answer("how much stock?", session=db)
@@ -448,7 +448,7 @@ class TestTheVerdictAsModelsActuallyWriteIt:
 
                 return Response()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
 
     @pytest.mark.parametrize(
@@ -513,7 +513,7 @@ class TestGreetingsCostNothing:
     def test_a_greeting_never_reaches_the_model(self, db, monkeypatch):
         from restaurant_ai.assistant import route
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr(
             "restaurant_ai.kernel.llm.get_model",
             lambda tier, **kw: pytest.fail("a greeting must not cost a model call"),

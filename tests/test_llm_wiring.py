@@ -249,3 +249,106 @@ class TestTheExampleEnvFile:
             if "=" in line and not line.lstrip().startswith("#")
         ]
         assert [k for k in unknown if k not in known] == []
+
+
+@pytest.fixture
+def ollama_env(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_HOST", "http://localhost:11434")
+    reset_settings_cache()
+    llm.reset_model_cache()
+    yield
+    reset_settings_cache()
+    llm.reset_model_cache()
+
+
+class TestOllamaProvider:
+    """A model on this machine: no key, no quota, no bill."""
+
+    def test_it_builds_the_configured_local_models(self, ollama_env):
+        from langchain_ollama import ChatOllama
+
+        model = llm.get_model("conversational")
+        assert isinstance(model, ChatOllama)
+        assert model.model == get_settings().ollama_model_conversational
+
+    def test_it_needs_no_api_key(self, ollama_env, monkeypatch):
+        """The whole point. Every other provider raises without one."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+        reset_settings_cache()
+        llm.reset_model_cache()
+        assert llm.get_model("reasoning") is not None
+
+    def test_the_context_window_is_set_explicitly(self, ollama_env):
+        """Ollama's default is smaller than one agent's prompt, and it truncates
+        the front of an over-long prompt without erroring — so the agent loses
+        its instructions and reports confidently on nothing."""
+        model = llm.get_model("reasoning")
+        assert model.num_ctx == get_settings().ollama_context
+        assert model.num_ctx >= 8192
+
+    def test_every_agents_tools_bind(self, ollama_env):
+        """A local model that cannot be given tools cannot run an agent at all."""
+        for name in sorted(all_agents()):
+            spec = get_agent(name)
+            tools = [_as_langchain_tool(t) for t in spec.tools]
+            if tools:
+                assert llm.get_model(spec.model_tier).bind_tools(tools) is not None
+
+
+class TestSplitProviders:
+    """Who answers depends on whether anyone is waiting.
+
+    A scheduled run at 06:00 can take three minutes on a machine under the
+    counter and cost nothing. The same three minutes on the owner's question at
+    lunchtime is a bot that looks dead. The two are different problems and this
+    is the one setting that separates them.
+    """
+
+    @pytest.fixture
+    def split(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "ollama")
+        monkeypatch.setenv("LLM_PROVIDER_INTERACTIVE", "anthropic")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-not-a-real-key")
+        reset_settings_cache()
+        llm.reset_model_cache()
+        yield
+        reset_settings_cache()
+        llm.reset_model_cache()
+
+    def test_scheduled_work_goes_local(self, split):
+        from langchain_ollama import ChatOllama
+
+        assert isinstance(llm.get_model("reasoning"), ChatOllama)
+
+    def test_the_owner_waiting_goes_to_the_cloud(self, split):
+        from langchain_anthropic import ChatAnthropic
+
+        assert isinstance(llm.get_model("conversational", interactive=True), ChatAnthropic)
+
+    def test_the_two_do_not_share_a_cache_entry(self, split):
+        """Same tier, different provider. A cache keyed on the model id alone
+        would hand the chat whichever one was built first."""
+        batch = llm.get_model("conversational")
+        chat = llm.get_model("conversational", interactive=True)
+        assert batch is not chat
+
+    def test_unset_means_one_provider_for_everything(self, anthropic_env):
+        """Every .env written before the split still means what it said."""
+        assert get_settings().llm_provider_interactive is None
+        assert llm.provider_for(interactive=True) == "anthropic"
+        assert llm.provider_for(interactive=False) == "anthropic"
+
+    def test_a_fake_batch_side_does_not_make_the_chat_fake(self, monkeypatch):
+        """Running agents deterministically while the owner still gets answers."""
+        monkeypatch.setenv("LLM_PROVIDER", "fake")
+        monkeypatch.setenv("LLM_PROVIDER_INTERACTIVE", "anthropic")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-not-a-real-key")
+        reset_settings_cache()
+        llm.reset_model_cache()
+
+        assert llm.is_fake() is True
+        assert llm.is_fake(interactive=True) is False
+        reset_settings_cache()
+        llm.reset_model_cache()

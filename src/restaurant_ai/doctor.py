@@ -207,6 +207,13 @@ def _check_model(report: Diagnosis) -> None:
     # that is spent look identical from the settings, and only one of them can
     # answer a question — so ask it something and see.
     name = f"{described.get('provider')} — {described.get('conversational', '?')}"
+    if described.get("interactive_provider"):
+        # The chat and the scheduled agents run on different machines entirely.
+        # A single line naming one of them would leave the other unchecked, and
+        # the untested half is the one nobody notices is broken.
+        name += (
+            f"; chat on {described['interactive_provider']} — {described.get('interactive', '?')}"
+        )
     try:
         from langchain_core.messages import HumanMessage
 

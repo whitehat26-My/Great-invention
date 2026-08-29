@@ -95,7 +95,7 @@ def model(monkeypatch: pytest.MonkeyPatch):
     def install(reply: Any) -> ScriptedModel:
         stub = ScriptedModel(reply=reply)
         monkeypatch.setattr(llm, "get_model", lambda tier="conversational": stub)
-        monkeypatch.setattr(llm, "is_fake", lambda: False)
+        monkeypatch.setattr(llm, "is_fake", lambda interactive=False: False)
         return stub
 
     return install

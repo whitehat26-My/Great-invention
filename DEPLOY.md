@@ -209,6 +209,57 @@ straining on "did the flour run low".
 system prompt and the same tool schemas; cached, that part bills at a tenth.
 It is the single biggest lever here and it is off by default.
 
+### Free instead: Hermes on your own machine
+
+An open model running locally costs nothing per call, has no daily cap, and
+needs no key. `LLM_PROVIDER=ollama` points the platform at it.
+
+```
+LLM_PROVIDER=ollama
+OLLAMA_MODEL_REASONING=hermes3:8b
+OLLAMA_MODEL_CONVERSATIONAL=hermes3:8b
+```
+
+Install Ollama from ollama.com, then `ollama pull hermes3:8b` — about 5GB on
+disk and roughly the same in RAM while it answers.
+
+Hermes is the right open model to reach for here because the agents **bind
+tools**, and Hermes is trained for tool calling. A general chat model that
+cannot emit a tool call does not fail — it runs the loop to its iteration limit
+doing nothing, and reports that it ran out of turns.
+
+Two honest limits:
+
+- **It is slower by a lot.** Seconds become minutes on a CPU. Fine at 06:00
+  when nobody is waiting; not fine when the owner has asked a question.
+- **It reasons less well.** An 8B model will pick the wrong tool or the wrong
+  arguments more often than Sonnet does. What saves you is that every action
+  worth worrying about is already behind an approval — a bad decision arrives
+  as a proposal you reject, not as a purchase order that happened.
+
+### The split: local for the work, cloud for the conversation
+
+Those two limits point the same way, so the setting exists to act on it:
+
+```
+LLM_PROVIDER=ollama                  # the ~78 scheduled calls/day
+LLM_PROVIDER_INTERACTIVE=anthropic   # the ~20 the owner waits on
+ANTHROPIC_API_KEY=sk-ant-...
+MODEL_CONVERSATIONAL=claude-haiku-4-5
+```
+
+The scheduled agents run free on the machine under the counter, taking whatever
+time they need. The owner's questions go to a hosted model and come back in
+seconds. That is roughly **$2/month instead of $9–16**, and the bot never waits
+on a quota.
+
+`LLM_PROVIDER_INTERACTIVE` unset means one provider for everything, which is
+what every existing `.env` already means.
+
+`restaurant-ai doctor` reports both halves when they differ — one line naming
+only one of them would leave the other unchecked, and the unchecked half is the
+one nobody notices is broken.
+
 ### What actually spends the money
 
 Not the owner's questions — ten of those a day is noise. It is the schedule, and

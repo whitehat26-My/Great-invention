@@ -46,7 +46,28 @@ class Settings(BaseSettings):
     # --- LLM ----------------------------------------------------------------
     # "fake" runs the whole platform deterministically with no API key and no
     # network, which is what the test suite and `simulate-day` use.
-    llm_provider: Literal["fake", "anthropic", "google"] = "fake"
+    llm_provider: Literal["fake", "anthropic", "google", "ollama"] = "fake"
+    # Who answers when a person is waiting. Unset means "the same as everything
+    # else", which is the right default and what every existing .env means.
+    #
+    # It exists because the two kinds of call have nothing in common but the
+    # API. A scheduled agent run at 06:00 can take three minutes on a local
+    # model and cost nothing; the same three minutes on the owner's question at
+    # lunchtime is a bot that looks dead. Splitting them lets a machine under
+    # the counter do the bulk work for free while the chat stays quick.
+    llm_provider_interactive: Literal["fake", "anthropic", "google", "ollama"] | None = None
+
+    # --- Ollama (local models: Hermes, Llama, Qwen, …) ---
+    # No key, no quota, no bill, and no network beyond the host itself. The cost
+    # is hardware: an 8B model quantised needs roughly 5GB of RAM, and answers
+    # in minutes on a CPU rather than seconds.
+    ollama_host: str = "http://localhost:11434"
+    ollama_model_reasoning: str = "hermes3:8b"
+    ollama_model_conversational: str = "hermes3:8b"
+    # Ollama's own default context is far smaller than one agent's prompt, and
+    # an over-long prompt is truncated silently rather than refused — so the
+    # agent loses its instructions and never learns that it did.
+    ollama_context: int = 16384
 
     # --- Anthropic ---
     anthropic_api_key: str = ""

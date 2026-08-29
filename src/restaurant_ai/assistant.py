@@ -144,7 +144,7 @@ def answer(question: str, session: Session | None = None) -> str:
         with session_scope() as scoped:
             snapshot = build_snapshot(scoped)
 
-    if llm.is_fake():
+    if llm.is_fake(interactive=True):
         # No model configured: say what is known rather than inventing prose.
         return _offline_answer(question, snapshot)
 
@@ -383,7 +383,7 @@ def route(instruction: str) -> Intent:
     if is_pleasantry(text):
         return Intent(kind="greeting")
 
-    if llm.is_fake():
+    if llm.is_fake(interactive=True):
         # Without a model there is no classifier. Naming an agent still works,
         # because that path never needed one.
         named = find_agent(text)
