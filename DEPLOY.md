@@ -220,7 +220,8 @@ OLLAMA_MODEL_REASONING=hermes3:latest
 OLLAMA_MODEL_CONVERSATIONAL=hermes3:latest
 ```
 
-After any `git pull`, run `pip install -e .` before starting. Pulling brings
+After any `git pull`, run `pip install -e .` and then `restaurant-ai migrate` before
+starting. Pulling brings
 code; it does not bring the packages that code needs, and a provider added
 upstream arrives as a missing module rather than as anything resembling a
 version problem.

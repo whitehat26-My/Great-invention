@@ -163,7 +163,10 @@ def _check_database(report: Diagnosis) -> None:
             "database",
             False,
             f"{type(exc).__name__}: {exc}",
-            "Start it with `make up`, then `make migrate` and `make seed`.",
+            # `make` is a developer's tool and this is the owner's message: on the
+            # machine where the database is actually unreachable there is no make.
+            "Start it with `restaurant-ai up`, which starts Postgres and applies the "
+            "schema itself.",
         )
 
 

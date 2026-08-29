@@ -106,6 +106,27 @@ def seed(
         typer.echo(f"  {key:22} {value}")
 
 
+@app.command("migrate")
+def migrate() -> None:
+    """Bring the database schema up to date after a pull.
+
+    `up` already does this on the way in, and compose has a `migrate` service
+    that runs before anything reads the database — so this existed everywhere
+    except as something a person could type. That gap only shows up at the
+    moment it costs the most: a pull brings a new table, the owner looks for the
+    obvious command, and the answer is to run something else and trust that it
+    happens on the way past.
+
+    Idempotent. On an up-to-date database it is a no-op that costs a second.
+    """
+    from restaurant_ai.services import migrate_database
+
+    migrated, note = migrate_database()
+    typer.echo(note)
+    if not migrated:
+        raise typer.Exit(code=1)
+
+
 @app.command("reset-db")
 def reset_db(
     yes: bool = typer.Option(False, "--yes", help="Confirm dropping every table."),
@@ -125,7 +146,7 @@ def reset_db(
     with get_engine().begin() as conn:
         conn.execute(text("DROP SCHEMA public CASCADE"))
         conn.execute(text("CREATE SCHEMA public"))
-    typer.echo("Schema dropped. Run `make migrate && make seed`.")
+    typer.echo("Schema dropped. Run `restaurant-ai migrate`, then `restaurant-ai seed`.")
 
 
 @app.command("brief")

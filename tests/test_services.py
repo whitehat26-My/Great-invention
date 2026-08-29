@@ -139,3 +139,50 @@ class TestTheStartupLauncher:
         assert result.exit_code == 1
         assert "not Windows" in result.output
         assert "docker compose" in result.output
+
+
+class TestTheMigrateCommand:
+    """It existed everywhere except as something a person could type.
+
+    `up` migrates on the way in and compose has a migrate service, so the gap
+    only showed at the moment it cost most: a pull brings a new table, the owner
+    reaches for the obvious command, and it is not there.
+    """
+
+    def test_it_exists_and_reports_what_it_did(self, db, monkeypatch):
+        from typer.testing import CliRunner
+
+        from restaurant_ai.cli import app
+
+        monkeypatch.setattr(
+            "restaurant_ai.services.migrate_database", lambda: (True, "Schema is up to date.")
+        )
+        result = CliRunner().invoke(app, ["migrate"])
+
+        assert result.exit_code == 0
+        assert "up to date" in result.output
+
+    def test_a_failure_exits_nonzero(self, monkeypatch):
+        """So a deploy script stops rather than starting against a stale schema."""
+        from typer.testing import CliRunner
+
+        from restaurant_ai.cli import app
+
+        monkeypatch.setattr(
+            "restaurant_ai.services.migrate_database",
+            lambda: (False, "Could not apply migrations: connection refused"),
+        )
+        result = CliRunner().invoke(app, ["migrate"])
+
+        assert result.exit_code == 1
+        assert "connection refused" in result.output
+
+    def test_reset_db_points_at_a_command_that_exists(self):
+        """It used to name `make migrate`, which is not what a Windows owner has."""
+        import inspect
+
+        from restaurant_ai import cli
+
+        source = inspect.getsource(cli.reset_db)
+        assert "make migrate" not in source
+        assert "restaurant-ai migrate" in source
