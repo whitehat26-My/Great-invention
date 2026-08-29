@@ -223,9 +223,16 @@ OLLAMA_MODEL_CONVERSATIONAL=hermes3:8b
 Installing it, on Windows, with no admin rights:
 
 ```powershell
+$ProgressPreference = 'SilentlyContinue'   # see below — not optional at this size
 Invoke-WebRequest -Uri "https://ollama.com/download/OllamaSetup.exe" -OutFile "OllamaSetup.exe"
 .\OllamaSetup.exe
 ```
+
+The first line matters here in a way it does not for `cloudflared`. Windows
+PowerShell buffers the whole download in memory and redraws its progress bar
+constantly, which on a 1.5GB installer costs more time than the transfer does.
+`curl.exe -L -o OllamaSetup.exe <url>` is the alternative — it ships with
+Windows and streams straight to disk.
 
 Then **open a new terminal** before `ollama pull hermes3:8b` — the installer
 puts `ollama` on the PATH, and a window opened before that never sees it. The
