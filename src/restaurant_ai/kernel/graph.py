@@ -356,6 +356,27 @@ def build_graph(spec: AgentSpec):
         approved = [p for p in proposals if p.approved]
 
         summary = state.get("summary") or ""
+
+        # What the model *said* is not what the agent *did*, and on the model
+        # path the summary has been only the former.
+        #
+        # A smaller model will run one tool, read the result, and close with a
+        # sentence about what it is going to do next — "with the policies
+        # refreshed, I can now draft purchase orders" — and stop. The run is a
+        # legitimate success: it did some work and chose to stop. But the
+        # sentence is a promise, and it reaches the owner's brief looking like a
+        # report. Someone reads that purchase orders are coming and waits for
+        # approvals that will never arrive.
+        #
+        # So the prose never stands alone. A model-path run states what it
+        # actually called, which the model cannot overstate because it is read
+        # off the recorded actions rather than out of the answer.
+        context = state.get("context") or {}
+        if context.get("_path") == "model":
+            ran = [a.tool_name for a in (state.get("actions") or []) if not a.error]
+            done = f"Called: {', '.join(dict.fromkeys(ran))}." if ran else "Called no tools."
+            summary = f"{summary} [{done}]" if summary else done
+
         if approved or rejected:
             parts = [summary] if summary else []
             if approved:
@@ -368,7 +389,6 @@ def build_graph(spec: AgentSpec):
         # one broken tool should not lose the rest of the work. But the run must
         # not then report clean success: that is how a crash in the pacing agent
         # went unnoticed while it silently stopped sending tickets to the pass.
-        context = state.get("context") or {}
         if (
             context.get("_path") == "model"
             and context.get("_acted")

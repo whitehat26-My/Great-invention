@@ -188,13 +188,19 @@ def run(agent: AgentSpec, **kwargs: Any):
 
 
 class TestPathSelection:
-    """Which planner runs. The bug here made the whole live path unreachable."""
+    """Which planner runs. The bug here made the whole live path unreachable.
+
+    These pin what the model *said*, with `startswith` rather than equality: a
+    model-path summary also carries a factual account of what was called, so
+    that the prose is never the only record. See TestTheSummaryIsGroundedInWhat
+    Happened in test_kernel.py for why.
+    """
 
     def test_a_configured_model_is_actually_asked(self, db, model):
         stub = model(lambda messages, turn: says("Nothing needs doing."))
         outcome = run(spec("live_selected"))
         assert stub.turns == 1, "the model was never consulted"
-        assert outcome.summary == "Nothing needs doing."
+        assert outcome.summary.startswith("Nothing needs doing.")
 
     def test_an_agent_with_a_deterministic_path_still_uses_the_model(self, db, model):
         # The regression: every agent defines an autonomous path, so preferring
@@ -225,7 +231,7 @@ class TestToolExecution:
         )
         outcome = run(spec("live_tool"))
         assert EFFECTS == ["note:prep the fryer"]
-        assert outcome.summary == "Noted."
+        assert outcome.summary.startswith("Noted.")
 
     def test_the_model_is_shown_what_the_tool_returned(self, db, model):
         stub = model(
@@ -254,7 +260,7 @@ class TestToolExecution:
         model(reply)
         outcome = run(spec("live_two_step"))
         assert EFFECTS == ["booked:T28"]
-        assert outcome.summary == "Booked."
+        assert outcome.summary.startswith("Booked.")
 
     def test_an_unknown_tool_is_reported_rather_than_silently_dropped(self, db, model):
         stub = model(lambda messages, turn: call("teleport") if turn == 1 else says("Ah."))
@@ -423,7 +429,7 @@ class TestSummaries:
             )
         )
         outcome = run(spec("live_thinking"))
-        assert outcome.summary == "All clear — no peanuts in that dish."
+        assert outcome.summary.startswith("All clear — no peanuts in that dish.")
         assert "lying" not in outcome.summary
 
     def test_a_silent_tool_turn_does_not_blank_the_summary(self, db, model):
@@ -455,7 +461,7 @@ class TestSummaries:
             )
         )
         outcome = run(spec("live_last_word"))
-        assert outcome.summary == "Fryer is fine."
+        assert outcome.summary.startswith("Fryer is fine.")
 
 
 class TestThinkingSurvivesTheLoop:

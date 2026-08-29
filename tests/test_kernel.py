@@ -367,3 +367,69 @@ class TestIdleRuns:
 
         assert get_agent("reputation").idle_when is None
         assert get_agent("order_pacing").idle_when is not None
+
+
+class TestTheSummaryIsGroundedInWhatHappened:
+    """A smaller model closes with what it is *about to* do, and stops.
+
+    Observed on Hermes 8B: it called recalculate_policies, read the result, and
+    finished with "with the policies refreshed, I can now draft purchase
+    orders." No purchase order was drafted. The run was a legitimate success —
+    it did work and chose to stop — but that sentence reaches the owner's brief
+    looking like a report, and someone waits for approvals that never arrive.
+    """
+
+    def _model_spec(self, name: str, calls: list[dict[str, Any]]) -> AgentSpec:
+        spec = _make_spec(name, calls)
+        # The model path is what the deterministic path is not: the summary is
+        # prose the model wrote, not a sentence the agent computed.
+        spec.autonomous = lambda ctx, context: {  # type: ignore[assignment]
+            "summary": "With the policies refreshed, I can now draft purchase orders.",
+            "results": {},
+            "tool_calls": calls,
+        }
+        return spec
+
+    def test_it_states_what_was_actually_called(self, db, monkeypatch):
+        spec = self._model_spec("t_grounded", [{"name": "note", "args": {"note": "x"}}])
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
+        monkeypatch.setattr(
+            "restaurant_ai.kernel.graph._reason_with_model",
+            lambda spec, state: {
+                **(spec.autonomous(None, {})),
+                "iterations": state.get("iterations", 0) + 1,
+                "context": {
+                    **(state.get("context") or {}),
+                    "_planned_calls": spec.autonomous(None, {})["tool_calls"],
+                    "_path": "model",
+                },
+            },
+        )
+        outcome = run_agent(spec, trigger="cli")
+
+        assert "I can now draft purchase orders" in outcome.summary
+        assert "[Called: note.]" in outcome.summary
+
+    def test_a_run_that_called_nothing_says_so(self, db, monkeypatch):
+        """The worst case: pure prose, no work, and it reads like a report."""
+        spec = self._model_spec("t_all_talk", [])
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
+        monkeypatch.setattr(
+            "restaurant_ai.kernel.graph._reason_with_model",
+            lambda spec, state: {
+                "summary": "I will draft the purchase orders now.",
+                "iterations": state.get("iterations", 0) + 1,
+                "context": {**(state.get("context") or {}), "_planned_calls": [], "_path": "model"},
+            },
+        )
+        outcome = run_agent(spec, trigger="cli")
+
+        assert "Called no tools." in outcome.summary
+
+    def test_the_deterministic_path_is_left_alone(self, db):
+        """Its summary is computed from what it did, so it cannot overstate."""
+        spec = _make_spec("t_deterministic", [{"name": "note", "args": {"note": "x"}}])
+        outcome = run_agent(spec, trigger="cli")
+
+        assert outcome.summary == "Saw 42 covers."
+        assert "Called:" not in outcome.summary
