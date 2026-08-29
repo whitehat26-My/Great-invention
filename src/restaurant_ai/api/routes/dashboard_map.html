@@ -90,6 +90,21 @@
              margin: 16px 0 8px; }
   .tool { border: 1px solid var(--edge); border-left: 3px solid var(--baseline); border-radius: 6px;
           padding: 8px 12px; margin-bottom: 8px; background: var(--surface); }
+  /* The week's runs, one mark each. Squares rather than dots: a strip of ten
+     is read as a sequence, and a circle at this size reads as a bullet. */
+  .runs { display: flex; gap: 3px; margin: 2px 0 8px; flex-wrap: wrap; }
+  .run { width: 14px; height: 14px; border-radius: 3px; background: var(--baseline);
+         display: inline-block; cursor: help; }
+  .run.completed { background: var(--good); }
+  .run.failed { background: var(--critical); }
+  .run.awaiting_approval { background: var(--warning); }
+  .run.rejected { background: var(--serious); }
+  .run.running { background: var(--s1); }
+  .muted { color: var(--ink-3); font-size: 12px; margin: 2px 0 0; }
+  /* The one line here that asks for something rather than reporting something. */
+  .wants { margin: 10px 0 0; padding: 8px 11px; border-radius: 6px; font-size: 13px;
+           color: var(--warning); border: 1px solid var(--warning);
+           background: rgba(250, 178, 25, .08); }
   .tool.gated { border-left-color: var(--warning); }
   .tool b { font-size: 13px; font-family: ui-monospace, monospace; }
   .tool .gate { color: var(--warning); font-size: 11px; margin-left: 8px; }
@@ -282,6 +297,22 @@ function draw(data) {
     node.classList.add("active");
   }
 
+  function ago(iso) {
+    const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+    if (seconds < 90) return "just now";
+    if (seconds < 5400) return Math.round(seconds / 60) + " minutes ago";
+    if (seconds < 172800) return Math.round(seconds / 3600) + " hours ago";
+    return Math.round(seconds / 86400) + " days ago";
+  }
+
+  function secs(value) {
+    // "0s" reads as a broken clock rather than a fast agent, and the
+    // deterministic path really does finish inside a second.
+    if (value < 1) return "under a second";
+    if (value < 90) return Math.round(value) + "s";
+    return Math.round(value / 60) + " min";
+  }
+
   function showDept(dept) {
     const panel = $("panel"); panel.replaceChildren(); panel.classList.remove("open");
     const kicker = el("div", "kicker"); kicker.textContent = "department";
@@ -318,6 +349,14 @@ function draw(data) {
     tier.textContent = agent.model_tier === "reasoning" ? "🧠 reasoning model" : "💬 conversational model";
     badges.append(sb, tier); panel.append(badges);
 
+    if (agent.pending_approvals > 0) {
+      // Above everything else: the only line here asking the reader for
+      // something rather than telling them something.
+      const wants = el("div", "wants");
+      wants.textContent = agent.pending_approvals + " waiting for your approval";
+      panel.append(wants);
+    }
+
     const what = el("h3"); what.textContent = "What this agent does";
     const p1 = el("p"); p1.textContent = agent.description;
     panel.append(what, p1);
@@ -325,6 +364,41 @@ function draw(data) {
     const when = el("h3"); when.textContent = "When it runs";
     const p2 = el("p"); p2.textContent = agent.schedule;
     panel.append(when, p2);
+    const timing = el("p", "muted");
+    timing.textContent = [
+      agent.last_run_at ? "Last ran " + ago(agent.last_run_at) : "Has not run in the last week",
+      agent.next_run ? "next " + agent.next_run : null,
+      agent.typical_seconds != null ? "usually takes " + secs(agent.typical_seconds) : null
+    ].filter(Boolean).join(" \u00b7 ");
+    panel.append(timing);
+
+    // The week as a strip. A failed run is worth seeing beside the nine that
+    // were not, and a gap is worth seeing at all: the schedule says what should
+    // have happened, this says what did.
+    const histH = el("h3"); histH.textContent = "Last 7 days";
+    panel.append(histH);
+    if (agent.runs_7d === 0) {
+      const none = el("p", "muted");
+      none.textContent = "No runs. If that is not expected, beat or the worker is not running.";
+      panel.append(none);
+    } else {
+      const strip = el("div", "runs");
+      for (const run of agent.recent.slice().reverse()) {
+        const dot = el("i", "run " + (run.status || "idle"));
+        dot.title = [run.status,
+                     run.at ? new Date(run.at).toLocaleString() : null,
+                     run.seconds != null ? secs(run.seconds) : null,
+                     run.summary].filter(Boolean).join(" \u2014 ");
+        strip.append(dot);
+      }
+      panel.append(strip);
+      const tally = el("p", "muted");
+      const bits = [agent.runs_7d + " run(s)"];
+      if (agent.failed_7d) bits.push(agent.failed_7d + " failed");
+      if (agent.tokens_7d) bits.push(agent.tokens_7d.toLocaleString() + " tokens");
+      tally.textContent = bits.join(" \u00b7 ");
+      panel.append(tally);
+    }
 
     if (agent.last_summary) {
       const lastH = el("h3"); lastH.textContent = "Last run said";
