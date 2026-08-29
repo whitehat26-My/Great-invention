@@ -148,3 +148,21 @@ def _notify_approval(outcome) -> None:
 @shared_task(name="restaurant_ai.worker.tasks.ping")
 def ping() -> str:
     return f"pong {clock.now().isoformat()}"
+
+
+@celery_app.task(name="restaurant_ai.worker.tasks.prune_conversations")
+def prune_conversations() -> dict[str, Any]:
+    """Drop chat older than a week.
+
+    Chat is the one place the owner types freely into this system, so it is
+    where a phone number, a supplier's price or a complaint about a member of
+    staff ends up without anyone deciding it should be stored. Keeping it
+    forever is a liability that earns nothing — the facts worth having are
+    already in the tables the agents write.
+    """
+    from restaurant_ai import memory
+    from restaurant_ai.db.base import session_scope
+
+    with session_scope() as session:
+        dropped = memory.prune(session)
+    return {"turns_dropped": dropped}

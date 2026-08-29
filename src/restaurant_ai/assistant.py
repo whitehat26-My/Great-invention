@@ -116,20 +116,42 @@ move a shift, say plainly that you cannot do it from here, name the agent whose
 job it is, and remind them it arrives as a card to approve. Never imply that
 something has been done.
 
+WHO YOU ARE
+Your name is Keanu. You work here. The owner is a colleague you talk to every
+day, not a user filing a query, so talk the way a trusted manager does on the
+phone: warm, direct, and brief. Use "we" about the restaurant — it is yours too.
+Malay or English, whichever they use; mixing them is normal here and fine.
+
 HOW TO ANSWER
 - Be short. This is read on a phone: a few sentences, not an essay.
+- Answer in the flow of the conversation. If they have just asked about chicken
+  and then say "and rice?", that is about rice stock — do not ask them to
+  repeat themselves.
 - Use the numbers in the snapshot. Never invent one.
 - If the snapshot does not contain the answer, say so and say what would.
 - A view marked "unavailable" is broken, not empty — say that rather than
   reporting zero.
 - Plain language a restaurant owner uses, not JSON field names.
+- No greeting every time, no "I hope this helps", no restating their question
+  back at them. Answer, and stop.
+- Say what you think when it matters. "Rice is fine, but the chicken will not
+  last the weekend" is worth more than either number on its own.
 
 THE RESTAURANT RIGHT NOW
 {json.dumps(snapshot, indent=1, default=str)}"""
 
 
-def answer(question: str, session: Session | None = None) -> str:
-    """Answer one question about the restaurant. Never changes anything."""
+def answer(
+    question: str,
+    session: Session | None = None,
+    history: list[Any] | None = None,
+) -> str:
+    """Answer one question about the restaurant. Never changes anything.
+
+    ``history`` is the recent exchange, oldest first, so a follow-up is read as
+    a follow-up. Without it every message arrived alone and "and rice?" was
+    unanswerable — which is the difference between a search box and a colleague.
+    """
     from restaurant_ai.db.base import session_scope
     from restaurant_ai.kernel import llm
     from restaurant_ai.kernel.graph import _message_text
@@ -148,14 +170,25 @@ def answer(question: str, session: Session | None = None) -> str:
         # No model configured: say what is known rather than inventing prose.
         return _offline_answer(question, snapshot)
 
-    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+    from restaurant_ai.memory import KEANU
 
     # No tools are bound. This model cannot act on the restaurant.
+    conversation: list[Any] = [SystemMessage(content=_system_prompt(snapshot))]
+    for turn in history or []:
+        role = getattr(turn, "role", None)
+        text = getattr(turn, "text", "")
+        if not text:
+            continue
+        conversation.append(
+            AIMessage(content=text) if role == KEANU else HumanMessage(content=text)
+        )
+    conversation.append(HumanMessage(content=question))
+
     try:
         model = llm.get_model("conversational", interactive=True)
-        response = model.invoke(
-            [SystemMessage(content=_system_prompt(snapshot)), HumanMessage(content=question)]
-        )
+        response = model.invoke(conversation)
     except Exception as exc:
         log.warning("answering failed", error=str(exc))
         return explain_model_failure(exc)
@@ -425,12 +458,17 @@ def greet() -> str:
     )
 
 
-def route(instruction: str) -> Intent:
+def route(instruction: str, history: list[Any] | None = None) -> Intent:
     """Question, instruction, or neither — decided before anything happens.
 
     A model that is unreachable or rate-limited routes to ``unclear``, not to a
     guess: the deterministic ``/run <agent>`` path is what the owner falls back
     to, and it is named in the reply.
+
+    ``history`` is what makes short replies routable. "do it" is an instruction
+    only if you remember being asked "should we reorder the rice?" a moment ago;
+    read alone it is not routable at all, and the owner gets asked to repeat
+    themselves in the one situation where they were being clearest.
     """
     from restaurant_ai.kernel import llm
     from restaurant_ai.kernel.graph import _message_text
@@ -451,14 +489,26 @@ def route(instruction: str) -> Intent:
 
     from langchain_core.messages import HumanMessage, SystemMessage
 
+    asked: list[Any] = [SystemMessage(content=_ROUTER_PROMPT.format(menu=_agent_menu()))]
+    if history:
+        # As context for the classification, not as more to classify: only the
+        # last line is being decided, and saying so stops the router answering
+        # about a message two turns back.
+        said = "\n".join(f"{t.role}: {t.text}" for t in history if getattr(t, "text", ""))
+        if said:
+            asked.append(
+                HumanMessage(
+                    content=(
+                        f"Recent conversation, for context only:\n{said}\n\n"
+                        "Classify only the next message."
+                    )
+                )
+            )
+    asked.append(HumanMessage(content=text))
+
     try:
         model = llm.get_model("conversational", interactive=True)
-        response = model.invoke(
-            [
-                SystemMessage(content=_ROUTER_PROMPT.format(menu=_agent_menu())),
-                HumanMessage(content=text),
-            ]
-        )
+        response = model.invoke(asked)
         verdict = _first_meaningful_line(_message_text(response))
     except Exception as exc:
         log.warning("routing failed", error=str(exc))

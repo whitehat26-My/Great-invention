@@ -149,3 +149,31 @@ class OutboxEvent(UUIDPk, Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str | None] = mapped_column(Text)
     source_run_id: Mapped[str | None] = mapped_column(String(36), index=True)
+
+
+class ConversationTurn(UUIDPk, Base):
+    """One thing said in the approvals chat, by the owner or by Keanu.
+
+    Without this every message was answered alone, and the desk could not follow
+    a conversation: "how much chicken is left?" worked, and "and rice?" meant
+    nothing at all. That is not a small gap in politeness — it is the difference
+    between a search box and someone to talk to.
+
+    It lives in the database rather than in the listener's memory because the
+    listener is restarted: by the supervisor when it dies, by a reboot, by an
+    upgrade. A thread that survives the question and not the restart is worse
+    than none, because it is unpredictable.
+
+    Kept per chat, and read back within a time window — an exchange resumed
+    hours later is a new conversation, and dragging this morning's stock
+    question into tonight's roster question helps nobody.
+    """
+
+    __tablename__ = "conversation_turn"
+
+    chat_id: Mapped[str] = mapped_column(String(40), index=True)
+    role: Mapped[str] = mapped_column(String(10), doc="owner | keanu")
+    text: Mapped[str] = mapped_column(Text)
+    said_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+    __table_args__ = (Index("ix_conversation_chat_time", "chat_id", "said_at"),)

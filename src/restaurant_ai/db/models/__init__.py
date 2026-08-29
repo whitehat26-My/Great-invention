@@ -8,6 +8,7 @@ from restaurant_ai.db.models.agent import (
     AgentAction,
     AgentRun,
     ApprovalRequest,
+    ConversationTurn,
     InboundEvent,
     OutboxEvent,
 )
@@ -155,6 +156,7 @@ __all__ = [
     # agent plane
     "AgentAction",
     "AgentRun",
+    "ConversationTurn",
     "ApprovalRequest",
     "InboundEvent",
     "OutboxEvent",

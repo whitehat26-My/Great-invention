@@ -128,6 +128,7 @@ COMMANDS
   /agents      who does what
   /brief       tonight's brief, right now
   /pending     what is waiting for your approval
+  /reset       forget what we were just talking about
   /help        this message
 
 Nothing that spends money or changes a price happens without a card you
@@ -172,6 +173,8 @@ def handle_message(message: dict[str, Any]) -> str | None:
         reply = _pending_text()
     elif command == "/agents":
         reply = _agents_text()
+    elif command == "/reset":
+        reply = _reset_conversation(chat_id)
     elif command == "/run":
         return _run_command(chat_id, text)
     elif command == "/sold":
@@ -185,14 +188,62 @@ def handle_message(message: dict[str, Any]) -> str | None:
     return f"answered: {text[:60]}"
 
 
-def _instruction_or_question(chat_id: Any, text: str) -> str:
-    """Work out whether the owner asked something or told me to do something."""
-    from restaurant_ai.assistant import Intent, answer, greet, route
+def _reset_conversation(chat_id: Any) -> str:
+    """Start a new topic without waiting an hour for the old one to lapse.
 
-    intent: Intent = route(text)
+    A thread that follows you is right until it is wrong, and the moment it is
+    wrong — a new subject read as a follow-up to the last — there has to be a
+    way to say so that is shorter than explaining it.
+    """
+    from restaurant_ai import memory
+    from restaurant_ai.db.base import session_scope
+
+    try:
+        with session_scope() as session:
+            memory.forget(session, chat_id)
+    except Exception as exc:
+        log.warning("could not clear conversation", error=str(exc))
+        return "I could not clear it just then — but say what you need and I will keep up."
+    return "Forgotten. What do you need?"
+
+
+def _instruction_or_question(chat_id: Any, text: str) -> str:
+    """Work out whether the owner asked something or told me to do something.
+
+    Everything here runs inside a conversation now. The exchange is read before
+    deciding and written after replying, so a follow-up is understood as one —
+    "and rice?" after a question about chicken, "do it" after a suggestion —
+    rather than met with a request to start again.
+
+    Memory never breaks the reply. A conversation this system cannot remember is
+    worse than the one it had before this existed; a conversation it refuses to
+    answer is worse than both.
+    """
+    from restaurant_ai import memory
+    from restaurant_ai.assistant import Intent, answer, greet, route
+    from restaurant_ai.db.base import session_scope
+
+    history: list[memory.Turn] = []
+    try:
+        with session_scope() as session:
+            history = memory.recent(session, chat_id)
+    except Exception as exc:
+        log.warning("could not read conversation history", error=str(exc))
+
+    def keep(said: str) -> None:
+        try:
+            with session_scope() as session:
+                memory.remember(session, chat_id, memory.OWNER, text)
+                memory.remember(session, chat_id, memory.KEANU, said)
+        except Exception as exc:
+            log.warning("could not record conversation", error=str(exc))
+
+    intent: Intent = route(text, history=history)
 
     if intent.kind == "greeting":
-        api("sendMessage", chat_id=chat_id, text=greet())
+        greeting = greet()
+        api("sendMessage", chat_id=chat_id, text=greeting)
+        keep(greeting)
         return "greeted"
 
     if intent.kind == "run" and intent.agent:
@@ -211,7 +262,9 @@ def _instruction_or_question(chat_id: Any, text: str) -> str:
         )
         return "unclear"
 
-    api("sendMessage", chat_id=chat_id, text=answer(text))
+    said = answer(text, history=history)
+    api("sendMessage", chat_id=chat_id, text=said)
+    keep(said)
     return f"answered: {text[:60]}"
 
 

@@ -107,6 +107,10 @@ celery_app.conf.beat_schedule["daily-brief"] = {
     "task": "restaurant_ai.worker.tasks.send_daily_brief",
     "schedule": crontab(hour="23", minute="55"),
 }
+celery_app.conf.beat_schedule["prune-conversations"] = {
+    "task": "restaurant_ai.worker.tasks.prune_conversations",
+    "schedule": crontab(hour="4", minute="20"),
+}
 celery_app.conf.beat_schedule["expire-approvals"] = {
     "task": "restaurant_ai.worker.tasks.expire_stale_approvals",
     "schedule": crontab(hour="*/4", minute="5"),

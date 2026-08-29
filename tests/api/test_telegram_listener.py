@@ -310,7 +310,8 @@ class TestTheOwnerCanAsk:
 
     def test_a_question_is_answered_into_the_same_chat(self, db, telegram, monkeypatch):
         monkeypatch.setattr(
-            "restaurant_ai.assistant.answer", lambda q, session=None: f"answering: {q}"
+            "restaurant_ai.assistant.answer",
+            lambda q, session=None, history=None: f"answering: {q}",
         )
         described = listener.handle_update(say("how much chicken do we have?"))
 
@@ -372,7 +373,8 @@ class TestWhoMayAsk:
 
     def test_a_stranger_gets_no_answer(self, db, telegram, monkeypatch):
         monkeypatch.setattr(
-            "restaurant_ai.assistant.answer", lambda q, session=None: "should never be called"
+            "restaurant_ai.assistant.answer",
+            lambda q, session=None, history=None: "should never be called",
         )
         with pytest.raises(listener.UnauthorisedPresser):
             listener.handle_update(say("what are today's takings?", chat="111", user=222))
@@ -425,8 +427,10 @@ def routes(monkeypatch):
     from restaurant_ai.assistant import Intent
 
     box = {"intent": Intent(kind="question")}
-    monkeypatch.setattr("restaurant_ai.assistant.route", lambda text: box["intent"])
-    monkeypatch.setattr("restaurant_ai.assistant.answer", lambda q, session=None: f"answering: {q}")
+    monkeypatch.setattr("restaurant_ai.assistant.route", lambda text, history=None: box["intent"])
+    monkeypatch.setattr(
+        "restaurant_ai.assistant.answer", lambda q, session=None, history=None: f"answering: {q}"
+    )
     return box
 
 
@@ -552,7 +556,7 @@ class TestItNeverGoesQuiet:
         )
         monkeypatch.setattr(
             "restaurant_ai.assistant.route",
-            lambda text: (_ for _ in ()).throw(RuntimeError("the model is on fire")),
+            lambda text, history=None: (_ for _ in ()).throw(RuntimeError("the model is on fire")),
         )
 
         offset, handled = listener.poll_once(None)
@@ -676,7 +680,7 @@ class TestGreetingsAreAnsweredFree:
     def test_hey_gets_a_reply_without_a_model(self, db, telegram, monkeypatch):
         monkeypatch.setattr(
             "restaurant_ai.assistant.answer",
-            lambda q, session=None: pytest.fail("a greeting must not reach the desk"),
+            lambda q, session=None, history=None: pytest.fail("a greeting must not reach the desk"),
         )
         described = listener.handle_update(say("hey"))
 

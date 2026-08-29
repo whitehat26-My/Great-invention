@@ -627,3 +627,80 @@ class TestAMissingPackageIsNotAProviderFailure:
         assert "pip install -e ." in said
         assert "not installed or not running" not in said
         reset_settings_cache()
+
+
+class TestItFollowsAConversation:
+    """The gap that made it a search box rather than a colleague.
+
+    "how much chicken is left?" always worked. "and rice?" was unanswerable,
+    because every message arrived with no idea that the first one had happened.
+    """
+
+    def _turns(self):
+        from restaurant_ai.memory import KEANU, OWNER, Turn
+
+        return [
+            Turn(role=OWNER, text="how much chicken is left?"),
+            Turn(role=KEANU, text="About 12kg — enough for tomorrow."),
+        ]
+
+    def test_the_exchange_reaches_the_model(self, db, monkeypatch):
+        seen = {}
+
+        class Model:
+            def invoke(self, messages):
+                seen["messages"] = messages
+
+                class R:
+                    content = "About 40kg of rice."
+
+                return R()
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Model())
+
+        answer("and rice?", session=db, history=self._turns())
+
+        texts = [str(getattr(m, "content", "")) for m in seen["messages"]]
+        assert any("how much chicken is left?" in t for t in texts), "the question is missing"
+        assert any("About 12kg" in t for t in texts), "Keanu's own answer is missing"
+        assert texts[-1] == "and rice?"
+
+    def test_keanu_speaks_as_himself_not_as_the_owner(self, db, monkeypatch):
+        """His turns must arrive as his, or the model reads its own words as
+        instructions from the owner and answers them again."""
+        from langchain_core.messages import AIMessage
+
+        seen = {}
+
+        class Model:
+            def invoke(self, messages):
+                seen["messages"] = messages
+
+                class R:
+                    content = "ok"
+
+                return R()
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Model())
+
+        answer("and rice?", session=db, history=self._turns())
+
+        spoken = [m for m in seen["messages"] if isinstance(m, AIMessage)]
+        assert [str(m.content) for m in spoken] == ["About 12kg — enough for tomorrow."]
+
+    def test_no_history_still_answers(self, db, monkeypatch):
+        """A first message has no thread, and must not be worse for it."""
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
+
+        class Model:
+            def invoke(self, messages):
+                class R:
+                    content = "About 40kg."
+
+                return R()
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Model())
+
+        assert answer("how much rice?", session=db) == "About 40kg."
