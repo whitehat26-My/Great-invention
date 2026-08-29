@@ -195,7 +195,7 @@ def explain_model_failure(exc: Exception) -> str:
         if "not found" in lowered or "no such model" in lowered or "try pulling" in lowered:
             return (
                 "That model is not on this machine yet. Pull it once with "
-                "`ollama pull hermes3:8b` — about 5GB, and it only happens the first "
+                "`ollama pull hermes3` — about 5GB, and it only happens the first "
                 "time.\n\n"
                 "`restaurant-ai models` lists what is already here."
             )

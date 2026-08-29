@@ -216,8 +216,8 @@ needs no key. `LLM_PROVIDER=ollama` points the platform at it.
 
 ```
 LLM_PROVIDER=ollama
-OLLAMA_MODEL_REASONING=hermes3:8b
-OLLAMA_MODEL_CONVERSATIONAL=hermes3:8b
+OLLAMA_MODEL_REASONING=hermes3:latest
+OLLAMA_MODEL_CONVERSATIONAL=hermes3:latest
 ```
 
 Installing it, on Windows, with no admin rights:
@@ -234,9 +234,14 @@ constantly, which on a 1.5GB installer costs more time than the transfer does.
 `curl.exe -L -o OllamaSetup.exe <url>` is the alternative — it ships with
 Windows and streams straight to disk.
 
-Then **open a new terminal** before `ollama pull hermes3:8b` — the installer
+Then **open a new terminal** before `ollama pull hermes3` — the installer
 puts `ollama` on the PATH, and a window opened before that never sees it. The
 model is about 5GB on disk and roughly the same in RAM while it answers.
+
+Then check what it actually saved as — `ollama list` names it, and a plain
+`pull hermes3` leaves `hermes3:latest` rather than a size-tagged one. Whatever
+that column says is what belongs in .env; `restaurant-ai models` reads the same
+list back from the platform's side.
 
 Hermes is the right open model to reach for here because the agents **bind
 tools**, and Hermes is trained for tool calling. A general chat model that

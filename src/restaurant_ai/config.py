@@ -62,8 +62,11 @@ class Settings(BaseSettings):
     # is hardware: an 8B model quantised needs roughly 5GB of RAM, and answers
     # in minutes on a CPU rather than seconds.
     ollama_host: str = "http://localhost:11434"
-    ollama_model_reasoning: str = "hermes3:8b"
-    ollama_model_conversational: str = "hermes3:8b"
+    # `:latest` because that is what a plain `ollama pull hermes3` leaves on the
+    # machine. Defaulting to a tag the documented command does not produce is a
+    # first run that fails on a model the owner correctly believes they pulled.
+    ollama_model_reasoning: str = "hermes3:latest"
+    ollama_model_conversational: str = "hermes3:latest"
     # Ollama's own default context is far smaller than one agent's prompt, and
     # an over-long prompt is truncated silently rather than refused — so the
     # agent loses its instructions and never learns that it did.
