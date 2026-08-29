@@ -598,3 +598,32 @@ class TestLocalModelFailures:
         reset_settings_cache()
         said = explain_model_failure(RuntimeError("429 RESOURCE_EXHAUSTED"))
         assert "today's free quota" in said
+
+
+class TestAMissingPackageIsNotAProviderFailure:
+    """`git pull` brings code that needs a package; nothing installs it.
+
+    It surfaces from the same call as a real provider error, so every other
+    explanation here would have sent the owner to check a key, a network or a
+    quota — none of which is involved. Adding any provider adds a dependency,
+    so this outlives the one that revealed it.
+    """
+
+    def test_it_names_the_package_and_the_command(self):
+        said = explain_model_failure(ModuleNotFoundError("No module named 'langchain_ollama'"))
+        assert "pip install -e ." in said
+        assert "not installed" in said
+
+    def test_it_does_not_blame_the_network_or_the_key(self):
+        said = explain_model_failure(ModuleNotFoundError("No module named 'langchain_ollama'"))
+        assert "could not reach" not in said.lower()
+        assert "quota" not in said.lower()
+
+    def test_it_wins_over_the_local_model_explanations(self, monkeypatch):
+        """A missing package under LLM_PROVIDER=ollama is still a missing package."""
+        monkeypatch.setenv("LLM_PROVIDER", "ollama")
+        reset_settings_cache()
+        said = explain_model_failure(ModuleNotFoundError("No module named 'langchain_ollama'"))
+        assert "pip install -e ." in said
+        assert "not installed or not running" not in said
+        reset_settings_cache()

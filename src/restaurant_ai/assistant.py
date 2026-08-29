@@ -177,6 +177,25 @@ def explain_model_failure(exc: Exception) -> str:
     detail = str(exc)
     lowered = detail.lower()
 
+    # Not a provider failure at all: the client library for this provider is not
+    # installed. It reads like one because it surfaces from the same call, and
+    # every other message here would send the owner to check a key, a network or
+    # a quota that has nothing to do with it.
+    #
+    # It happens on exactly one path, and that path is the common one: a `git
+    # pull` brings code that needs a package the environment does not have, and
+    # nothing installs it. Adding any future provider adds a dependency, so this
+    # is not specific to the one that revealed it.
+    if isinstance(exc, ModuleNotFoundError) or "no module named" in lowered:
+        missing = getattr(exc, "name", "") or "a provider package"
+        return (
+            f"The library for this provider is not installed ({missing}).\n\n"
+            "Nothing is wrong with the model, the key or the network — the code was "
+            "updated and the packages were not. From the project folder, in the "
+            "virtualenv:\n\n"
+            "    pip install -e ."
+        )
+
     # A local model fails in ways a hosted one cannot, and shares vocabulary
     # with ways it can. "Timed out" from Ollama is a CPU thinking, not a spent
     # quota — so these are answered first or the advice below is confidently
