@@ -940,6 +940,60 @@ def ask(
     typer.echo(answer(question))
 
 
+@app.command("dashboard")
+def dashboard(
+    port: int = typer.Option(8000, help="Where the API is listening."),
+    open_browser: bool = typer.Option(True, "--open/--no-open", help="Open it for you."),
+) -> None:
+    """Print the dashboard's address, with the key already in it.
+
+    The dashboard refuses anyone without the key, and a browser address bar
+    cannot send a header — so the key travels in the URL, and the owner was left
+    to build that URL by hand out of a secret in a file. Opening
+    `localhost:8000/dashboard` and being refused looks exactly like a broken
+    dashboard, which is how a working page becomes one nobody visits.
+
+    Says whether anything is actually listening, too. A correct address for a
+    process that is not running is its own confusion.
+    """
+    import webbrowser
+
+    from restaurant_ai.config import get_settings
+
+    key = get_settings().approval_api_key
+    if not key:
+        typer.echo(
+            "\n  APPROVAL_API_KEY is not set, so the dashboard refuses every request —\n"
+            "  including yours. Add a long random value to .env as APPROVAL_API_KEY,\n"
+            "  then restart `restaurant-ai up`.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    base = f"http://localhost:{port}"
+    live = False
+    try:
+        import httpx
+
+        live = httpx.get(f"{base}/health", timeout=2).status_code < 500
+    except Exception:
+        live = False
+
+    typer.echo(f"\n  Dashboard:   {base}/dashboard?key={key}")
+    typer.echo(f"  System map:  {base}/dashboard/map?key={key}")
+    if not live:
+        typer.echo(
+            f"\n  Nothing is answering on port {port} — start `restaurant-ai up` first,\n"
+            "  and leave that window open."
+        )
+        raise typer.Exit(code=1)
+
+    typer.echo("\n  The link carries the key. Treat it like a password.")
+    if open_browser:
+        webbrowser.open(f"{base}/dashboard?key={key}")
+        typer.echo("  Opened in your browser.")
+
+
 @app.command("readiness")
 def readiness() -> None:
     """What is real, and what is still a demonstration.

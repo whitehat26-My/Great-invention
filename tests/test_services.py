@@ -15,6 +15,7 @@ import pytest
 from typer.testing import CliRunner
 
 from restaurant_ai import services
+from restaurant_ai.config import reset_settings_cache
 
 
 class TestEnsureDatabase:
@@ -269,3 +270,64 @@ class TestNoCommandGoesSilentForMinutes:
     def test_up_says_it_too(self, monkeypatch):
         before = self._first_line_before(monkeypatch, ["up"])
         assert "Checking the database" in before
+
+
+class TestFindingTheDashboard:
+    """The dashboard refuses anyone without the key, and a browser address bar
+    cannot send a header — so the key travels in the URL, and the owner was left
+    to assemble that URL by hand out of a secret in a file. Opening
+    localhost:8000/dashboard and being refused looks exactly like a dashboard
+    that is broken, which is how a working page becomes one nobody visits."""
+
+    def _run(self, monkeypatch, *, key: str, listening: bool):
+        from typer.testing import CliRunner
+
+        from restaurant_ai.cli import app
+
+        monkeypatch.setenv("APPROVAL_API_KEY", key)
+        reset_settings_cache()
+
+        class Response:
+            status_code = 200 if listening else 500
+
+        import httpx
+
+        if listening:
+            monkeypatch.setattr(httpx, "get", lambda url, timeout=2: Response())
+        else:
+            monkeypatch.setattr(
+                httpx, "get", lambda url, timeout=2: (_ for _ in ()).throw(httpx.ConnectError("no"))
+            )
+        result = CliRunner().invoke(app, ["dashboard", "--no-open"])
+        reset_settings_cache()
+        return result
+
+    def test_it_prints_a_url_that_would_actually_work(self, monkeypatch):
+        result = self._run(monkeypatch, key="a-long-random-value", listening=True)
+
+        assert result.exit_code == 0
+        assert "/dashboard?key=a-long-random-value" in result.output
+        assert "/dashboard/map?key=a-long-random-value" in result.output
+
+    def test_a_correct_address_for_a_dead_server_is_its_own_confusion(self, monkeypatch):
+        result = self._run(monkeypatch, key="a-long-random-value", listening=False)
+
+        assert result.exit_code == 1
+        assert "Nothing is answering" in result.output
+        # The address is still printed: knowing where it will be is useful even
+        # while it is not there yet.
+        assert "/dashboard?key=" in result.output
+
+    def test_no_key_is_explained_as_the_refusal_it_causes(self, monkeypatch):
+        result = self._run(monkeypatch, key="", listening=True)
+
+        assert result.exit_code == 1
+        assert "refuses every request" in result.output
+        assert "including yours" in result.output
+
+    def test_the_key_is_never_printed_without_a_url_around_it(self, monkeypatch):
+        """It is a password. It appears because it has to, in the one place it
+        is useful, with a line saying what it is."""
+        result = self._run(monkeypatch, key="sekret-value", listening=True)
+
+        assert "Treat it like a password" in result.output
