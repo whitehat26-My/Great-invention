@@ -53,7 +53,9 @@ class TestTheTemplateIsTrue:
 
         assert summary.counts == {
             "suppliers": 1,
-            "staff": 2,
+            # Two showing the short form — name and role only — and one filled
+            # in, because both have to keep working.
+            "staff": 3,
             "ingredients": 4,
             "sub_recipes": 1,
             "menu_items": 1,

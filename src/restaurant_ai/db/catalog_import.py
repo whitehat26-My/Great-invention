@@ -225,6 +225,11 @@ def import_catalog(
             errors.append(f"{where}: role {role!r} is not one of {', '.join(sorted(_ROLES))}.")
             continue
 
+        # Only the code, the name and the role are asked for. Everything else is
+        # Henry's to work out or the owner's to say later in a message: an owner
+        # who has to fill in ten columns before the roster agent will look at
+        # anyone fills in nobody, and a wage typed into a spreadsheet to satisfy
+        # a validator is worse than a wage the system admits it does not know.
         member = _upsert(
             session,
             Staff,
@@ -232,6 +237,8 @@ def import_catalog(
             {
                 "name": name,
                 "role": role,
+                # Zero means unknown, and `readiness` says so rather than
+                # letting labour cost look free.
                 "hourly_rate": money(_number(row, "hourly_rate", errors, where) or 0),
                 "max_weekly_hours": _integer(row, "max_weekly_hours", errors, where) or 48,
                 "min_rest_hours": _integer(row, "min_rest_hours", errors, where) or 11,
@@ -241,8 +248,11 @@ def import_catalog(
         )
         session.flush()
 
-        days = _text(row, "days") or "1,2,3,4,5,6"
-        start, end = _text(row, "from") or "10:00", _text(row, "to") or "23:00"
+        # Available every day the restaurant is open unless told otherwise. A
+        # roster built from "everyone can work" and corrected by the owner beats
+        # one that cannot be built because nobody filled in the hours.
+        days = _text(row, "days") or "0,1,2,3,4,5,6"
+        start, end = _text(row, "from") or "10:00", _text(row, "to") or "23:59"
         try:
             opens, closes = _clock(start), _clock(end)
         except ValueError:
@@ -255,7 +265,11 @@ def import_catalog(
         # pending, and SQLAlchemy inserts the new rows before it issues the
         # deletes — so re-importing an unchanged sheet collides with the unique
         # constraint on (staff, weekday, start).
+        # A bulk delete goes round the session, so the rows it removed are still
+        # in this object's collection and SQLAlchemy re-inserts them on the next
+        # flush. Expiring the collection makes it re-read what is actually there.
         session.execute(delete(Availability).where(Availability.staff_id == member.id))
+        session.expire(member, ["availability"])
         session.flush()
         for part in days.split(","):
             part = part.strip()
@@ -682,22 +696,17 @@ _TEMPLATE: dict[str, tuple[list[str], list[list[Any]]]] = {
             "to",
         ],
         [
-            # Availability on the same row: a mamak's staff work the same hours
-            # most days, and a second sheet keyed by employee code is a second
-            # chance to mistype the code.
-            [
-                "EMP-001",
-                "Ahmad",
-                "server",
-                9.50,
-                48,
-                11,
-                "+60 12-000 0000",
-                "0,1,2,3,4,5",
-                "10:00",
-                "23:00",
-            ],
-            ["EMP-002", "Siti", "chef", 14.00, 48, 11, "", "1,2,3,4,5,6", "09:00", "22:00"],
+            # Only the first three columns are needed. Left blank, Henry assumes
+            # available every day the restaurant is open and takes corrections by
+            # message — "Ahmad cannot work Fridays" — which is how a shift change
+            # actually reaches anyone in a place this size.
+            #
+            # Availability sits on the same row rather than a sheet of its own: a
+            # second sheet keyed by employee code is a second chance to mistype
+            # the code.
+            ["EMP-001", "Ahmad", "server", "", "", "", "", "", "", ""],
+            ["EMP-002", "Siti", "chef", "", "", "", "", "", "", ""],
+            ["EMP-003", "Kumar", "barista", 10.00, 44, 11, "", "0,1,2,3,4", "11:00", "23:00"],
         ],
     ),
     "Ingredients": (
