@@ -115,3 +115,25 @@ class TestWhatItSaysOutLoud:
     def test_it_counts_how_many_agents_are_usable(self, db):
         said = render(look(db))
         assert "can tell you the truth today" in said
+
+
+class TestAnEmptyRecipeIsNotACostedDish:
+    """The importer writes a Recipe row for every dish whether or not the BOM
+    sheet had anything in it. Counting those rows says all 146 dishes are costed
+    the moment the menu is imported — which is the exact mistake this module
+    exists to catch, and it was made here first."""
+
+    def test_a_recipe_with_no_components_does_not_count(self, db):
+        from sqlalchemy import func, select
+
+        from restaurant_ai.db.models import Recipe, RecipeComponent
+
+        recipes = db.execute(select(func.count()).select_from(Recipe)).scalar_one()
+        with_components = db.execute(
+            select(func.count(func.distinct(Recipe.menu_item_id)))
+            .select_from(Recipe)
+            .join(RecipeComponent, RecipeComponent.recipe_id == Recipe.id)
+        ).scalar_one()
+
+        assert survey(db)["costed_dishes"] == with_components
+        assert survey(db)["costed_dishes"] <= recipes

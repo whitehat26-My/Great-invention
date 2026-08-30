@@ -127,6 +127,91 @@ def migrate() -> None:
         raise typer.Exit(code=1)
 
 
+@app.command("start-real")
+def start_real(
+    yes: bool = typer.Option(False, "--yes", help="Confirm erasing everything."),
+    menu: str = typer.Option(None, help="Menu spreadsheet to import. Optional."),
+) -> None:
+    """Empty the restaurant of invented data and set it up to hold real data.
+
+    The three steps this replaces were the wrong three. `reset-db` leaves a
+    database with no chart of accounts, which is not a neutral starting point —
+    it is one where the books can never be posted. `seed` puts the accounts back
+    and fifteen demo dishes, fake staff, fake suppliers and eight weeks of
+    invented trading with them. Nobody wants the second to get the first, and
+    doing it by hand is how a demo quietly becomes the data.
+
+    What is left afterwards: allergen codes, menu sections and a chart of
+    accounts, which are the same in every restaurant. No dishes, no staff, no
+    suppliers, no orders — those are yours, and an empty table is honest where a
+    plausible one is not.
+    """
+    from restaurant_ai.config import get_settings
+    from restaurant_ai.db.base import get_engine, session_scope
+    from restaurant_ai.db.seed import seed_essentials
+    from restaurant_ai.services import migrate_database
+
+    if not yes:
+        typer.echo(
+            "\n  This erases every order, every agent run and every approval in this\n"
+            "  database. Re-run with --yes when you mean it.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    from sqlalchemy import text
+
+    settings = get_settings()
+    typer.echo(f"\n  Emptying {settings.postgres_db} at {settings.postgres_host}…")
+    with get_engine().begin() as conn:
+        conn.execute(text("DROP SCHEMA public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
+
+    migrated, note = migrate_database()
+    if not migrated:
+        typer.echo(f"\n  {note}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"  {note}")
+
+    with session_scope() as session:
+        counts = seed_essentials(session)
+    for key, value in counts.items():
+        typer.echo(f"  {key:16} {value}")
+
+    if menu:
+        typer.echo(f"\n  Importing {menu}…")
+        from restaurant_ai.db.base import get_sessionmaker
+        from restaurant_ai.db.catalog_import import CatalogImportError, import_catalog
+
+        session = get_sessionmaker()()
+        try:
+            # Uncosted is allowed and then reported: a menu with no recipes is
+            # the normal state on day one, and refusing it would mean no menu at
+            # all. `readiness` is what will not let it be forgotten.
+            summary = import_catalog(session, menu, replace_menu=True, allow_uncosted=True)
+            session.commit()
+        except (CatalogImportError, FileNotFoundError) as exc:
+            session.rollback()
+            typer.echo(f"\n  {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        finally:
+            session.close()
+        for key, count in summary.counts.items():
+            typer.echo(f"    {key:12} {count}")
+        if summary.uncosted:
+            # Named, not listed. A hundred and forty-six SKUs is not a report,
+            # and the number plus what it costs you is the whole message.
+            typer.echo(
+                f"\n  {len(summary.uncosted)} of {summary.counts.get('menu_items', 0)} "
+                "dishes have no recipe yet, so nothing can say what they earn."
+            )
+
+    typer.echo(
+        "\n  Empty and ready. Nothing here is invented.\n"
+        "  `restaurant-ai readiness` says what each agent still needs."
+    )
+
+
 @app.command("reset-db")
 def reset_db(
     yes: bool = typer.Option(False, "--yes", help="Confirm dropping every table."),

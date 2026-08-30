@@ -66,9 +66,15 @@ def _count(session: Session, model: Any) -> int:
 def survey(session: Session) -> dict[str, Any]:
     """The counts every judgement below is made from."""
     dishes = _count(session, m.MenuItem)
+    # A recipe with no components in it, which is what the importer writes for a
+    # dish whose BOM sheet is empty. Counting recipe rows says every dish is
+    # costed the moment the menu is imported — the exact mistake this module
+    # exists to catch, made here first.
     costed = int(
         session.execute(
-            select(func.count(func.distinct(m.Recipe.menu_item_id))).select_from(m.Recipe)
+            select(func.count(func.distinct(m.Recipe.menu_item_id)))
+            .select_from(m.Recipe)
+            .join(m.RecipeComponent, m.RecipeComponent.recipe_id == m.Recipe.id)
         ).scalar_one()
     )
     return {

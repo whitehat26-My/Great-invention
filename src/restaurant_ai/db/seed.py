@@ -289,6 +289,45 @@ def seed_reference(session: Session) -> dict[str, int]:
     return counts
 
 
+def seed_essentials(session: Session) -> dict[str, int]:
+    """The skeleton a real restaurant needs, and nothing it has to invent.
+
+    ``seed_reference`` mixes two things that only look alike. Allergen codes and
+    a chart of accounts are the same in every restaurant in the country; the
+    staff, the suppliers, the tables and the fifteen demo dishes are one
+    imaginary restaurant's, and loading them into a real one is how a demo
+    quietly becomes the data.
+
+    Without the accounts the books cannot be posted at all — a fresh database is
+    not neutral, it is missing the ledger Emil writes into — so an owner
+    starting for real needed to seed the fiction to get the skeleton. This is
+    the skeleton on its own.
+
+    Empty is the point elsewhere. No staff, no suppliers, no dishes: those are
+    the restaurant's own, and an empty table is honest where a plausible one is
+    not.
+    """
+    counts: dict[str, int] = {}
+
+    for code, label in ALLERGENS:
+        _upsert(session, Allergen, {"code": code}, {"label": label})
+    counts["allergens"] = len(ALLERGENS)
+
+    # Menu sections are how a menu is grouped, not what is on it. The importer
+    # needs somewhere to put a dish, and "Rice" means the same thing everywhere.
+    for name, order in MENU_SECTIONS:
+        _upsert(session, MenuSection, {"name": name}, {"display_order": order})
+    counts["menu_sections"] = len(MENU_SECTIONS)
+
+    # Double entry needs both sides to exist before anything can be posted.
+    for code, name, acc_type in LEDGER_ACCOUNTS:
+        _upsert(session, LedgerAccount, {"code": code}, {"name": name, "type": acc_type})
+    counts["ledger_accounts"] = len(LEDGER_ACCOUNTS)
+
+    log.info("essentials loaded", **counts)
+    return counts
+
+
 def seed_opening_stock(session: Session, days_cover: int = 6) -> int:
     """Give every ingredient an opening balance, sized from menu demand.
 
@@ -574,4 +613,10 @@ def seed_all(
         return counts
 
 
-__all__ = ["seed_all", "seed_reference", "seed_history", "seed_opening_stock"]
+__all__ = [
+    "seed_all",
+    "seed_essentials",
+    "seed_reference",
+    "seed_history",
+    "seed_opening_stock",
+]
