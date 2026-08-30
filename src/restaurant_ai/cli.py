@@ -836,6 +836,24 @@ def ask(
     typer.echo(answer(question))
 
 
+@app.command("readiness")
+def readiness() -> None:
+    """What is real, and what is still a demonstration.
+
+    `doctor` answers "is it running". This answers the question that comes
+    after, and the one that actually decides whether to act on a number: can
+    each agent tell you the truth yet, and if not, what is missing.
+
+    It never says "add data". Every gap names the specific thing and how it
+    arrives, because "insufficient data" is where most of these stop.
+    """
+    from restaurant_ai.db.base import session_scope
+    from restaurant_ai.readiness import look, render
+
+    with session_scope() as session:
+        typer.echo(render(look(session)))
+
+
 @app.command("doctor")
 def doctor() -> None:
     """Why nothing happened — check every link in the chain, change nothing.
