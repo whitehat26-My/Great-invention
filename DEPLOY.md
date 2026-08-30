@@ -416,6 +416,45 @@ Three honest caveats, because none of them are in the marketing:
    is the same command. It is untested on ARM by me — this sandbox is x86_64 —
    so expect the first build to take longer and tell me if anything fails.
 
+### What Oracle costs you that the numbers do not show
+
+Its 24 GB is more memory than a desktop with 16 GB. It is also **the wrong
+comparison**, because memory was never the constraint — a graphics card was.
+
+A machine with a 12 GB GPU answers a Hermes prompt in about five seconds. The
+free Oracle shape has four ARM cores and no GPU at all, so the same prompt takes
+minutes. Nothing is broken; the arithmetic is simply being done by a processor
+instead of a card built for it, and that is a difference of thirty to fifty
+times.
+
+Which matters entirely depending on who is waiting:
+
+| | on the desktop's GPU | on Oracle's CPU | does it matter |
+|---|---|---|---|
+| Scheduled agent runs | seconds | minutes | **no** — nobody is waiting at 06:00 |
+| The owner's questions | seconds | minutes | **yes** — a bot that takes three minutes is a dead bot |
+
+So a machine with no GPU is not a bad host. It is a bad host *for the chat*,
+and that is exactly what `LLM_PROVIDER_INTERACTIVE` exists to solve: Hermes runs
+free on the server for the eighty-odd scheduled calls a day nobody waits on, and
+the twenty the owner waits for go to a hosted model and come back in seconds.
+
+```
+LLM_PROVIDER=ollama                  # free, slow, and nobody is waiting
+LLM_PROVIDER_INTERACTIVE=anthropic   # seconds, for the owner
+ANTHROPIC_API_KEY=sk-ant-...
+MODEL_CONVERSATIONAL=claude-haiku-4-5
+```
+
+That is free hosting, free agent inference, and roughly $2 a month for a chat
+that answers immediately — against about RM20 a month of electricity to leave a
+desktop running, and a restaurant that goes dark when the power does.
+
+The honest case for keeping the desktop: it is faster at everything, the data
+never leaves the building, and there is no account to lose. The honest case
+against: it is off when the power is off, and nobody is there at 3am to turn it
+back on.
+
 Once the instance exists (Ubuntu 22.04+, "Ampere" shape, 4 OCPU / 24 GB):
 
 > **These commands run on the server, in its Ubuntu terminal** — connect with
