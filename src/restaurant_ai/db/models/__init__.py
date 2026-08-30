@@ -8,8 +8,10 @@ from restaurant_ai.db.models.agent import (
     AgentAction,
     AgentRun,
     ApprovalRequest,
+    ConversationTurn,
     InboundEvent,
     OutboxEvent,
+    Reminder,
 )
 from restaurant_ai.db.models.enums import (
     AccountType,
@@ -155,6 +157,8 @@ __all__ = [
     # agent plane
     "AgentAction",
     "AgentRun",
+    "ConversationTurn",
+    "Reminder",
     "ApprovalRequest",
     "InboundEvent",
     "OutboxEvent",

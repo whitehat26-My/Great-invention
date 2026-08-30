@@ -18,7 +18,7 @@ from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from restaurant_ai import clock
 from restaurant_ai.agents.common import sales_history, units_per_cover
@@ -82,6 +82,140 @@ def _staff_members(session) -> list[StaffMember]:
         )
         for p in people
     ]
+
+
+class HireArgs(BaseModel):
+    name: str = Field(..., description="The person's name, as the owner said it.")
+    role: str = Field(
+        ...,
+        description="chef, line_cook, kitchen_porter, server, host, barista or manager.",
+    )
+
+
+class AvailabilityArgs(BaseModel):
+    who: str = Field(..., description="The person's name, or enough of it to identify them.")
+    days: str = Field(
+        ...,
+        description=(
+            "Which days they CAN work, as numbers 0-6 where 0 is Monday. "
+            "'0,1,2,3,4' is Monday to Friday. Empty means they cannot work at all."
+        ),
+    )
+    start: str = Field("10:00", description="Earliest they can start, as HH:MM.")
+    end: str = Field("23:59", description="Latest they can work until, as HH:MM.")
+
+
+def _find_person(session, who: str) -> tuple[Any, list[str]]:
+    """The one person this names, or everyone it could have been.
+
+    Never a closest match. Changing the wrong person's availability rosters
+    somebody who cannot come and leaves somebody who can sitting at home, and
+    neither shows up as an error — it shows up on a Friday night, short-staffed.
+    """
+    from sqlalchemy import select as _select
+
+    needle = " ".join((who or "").lower().split())
+    if not needle:
+        return None, []
+    everyone = list(session.execute(_select(Staff).where(Staff.is_active)).scalars())
+    exact = [p for p in everyone if p.name.lower() == needle]
+    if len(exact) == 1:
+        return exact[0], []
+    close = [p for p in everyone if needle in p.name.lower()]
+    if len(close) == 1:
+        return close[0], []
+    return None, sorted(p.name for p in close or everyone)[:8]
+
+
+def hire(context: ToolContext, name: str, role: str) -> dict[str, Any]:
+    """Put someone on the books from a message, with nothing but a name and a job."""
+    from restaurant_ai.db.models import ShiftRole
+
+    wanted = role.lower().replace(" ", "_").replace("-", "_")
+    valid = {r.value for r in ShiftRole}
+    if wanted not in valid:
+        return {"hired": False, "note": f"'{role}' is not a role here.", "roles": sorted(valid)}
+
+    session = context.session
+    existing, _ = _find_person(session, name)
+    if existing is not None:
+        return {"hired": False, "note": f"{existing.name} is already on the books."}
+
+    taken = len(list(session.execute(select(Staff)).scalars()))
+    person = Staff(
+        employee_code=f"EMP-{taken + 1:03d}",
+        name=name.strip()[:160],
+        role=wanted,
+        # Unknown, not free. The owner can say the wage later; a number invented
+        # here would quietly become the labour cost in Camelia's report.
+        hourly_rate=Decimal("0"),
+        max_weekly_hours=48,
+        min_rest_hours=11,
+        is_active=True,
+    )
+    session.add(person)
+    session.flush()
+    # Available every day until told otherwise, so they can be rostered at once.
+    for weekday in range(7):
+        person.availability.append(
+            Availability(weekday=weekday, start_time=time(10, 0), end_time=time(23, 59))
+        )
+    return {
+        "hired": True,
+        "name": person.name,
+        "role": wanted,
+        "code": person.employee_code,
+        "note": "Available every day until you tell me otherwise. Wage not set.",
+    }
+
+
+def set_availability(
+    context: ToolContext, who: str, days: str, start: str = "10:00", end: str = "23:59"
+) -> dict[str, Any]:
+    """Change which days and hours someone can work."""
+    session = context.session
+    person, candidates = _find_person(session, who)
+    if person is None:
+        return {
+            "changed": False,
+            "note": f"I could not tell who '{who}' is." if candidates else "Nobody on the books.",
+            "candidates": candidates,
+        }
+
+    wanted: list[int] = []
+    for part in (days or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if not part.isdigit() or not 0 <= int(part) <= 6:
+            return {"changed": False, "note": f"'{part}' is not a day. Use 0-6, 0 = Monday."}
+        wanted.append(int(part))
+
+    try:
+        opens, closes = _clock_of(start), _clock_of(end)
+    except ValueError:
+        return {"changed": False, "note": f"'{start}' and '{end}' should look like 09:00."}
+
+    # A bulk delete goes round the session, so the rows it removed are still
+    # in this object's collection and SQLAlchemy re-inserts them on the next
+    # flush. Expiring the collection makes it re-read what is actually there.
+    session.execute(delete(Availability).where(Availability.staff_id == person.id))
+    session.expire(person, ["availability"])
+    session.flush()
+    for weekday in sorted(set(wanted)):
+        person.availability.append(Availability(weekday=weekday, start_time=opens, end_time=closes))
+    names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    return {
+        "changed": True,
+        "who": person.name,
+        "days": [names[d] for d in sorted(set(wanted))] or "none — cannot work at all",
+        "hours": f"{start}-{end}",
+    }
+
+
+def _clock_of(text: str) -> time:
+    hour, _, minute = str(text).strip().partition(":")
+    return time(int(hour), int(minute or 0))
 
 
 def perceive(context: ToolContext) -> dict[str, Any]:
@@ -267,7 +401,28 @@ SHIFT_SCHEDULING_AGENT = register(
             "so - do not quietly break a contract to close a gap.\n\n"
             "Within what is legal, minimise cost: spread hours to keep people out of overtime, "
             "and match the shape of the day rather than rostering a flat line from open to "
-            "close. Always report what you could not fill and why."
+            "close. Always report what you could not fill and why.\n\n"
+            "WHO WORKS HERE\n"
+            "The owner tells you in a message, in their own words: 'Ahmad cannot work "
+            "Fridays', 'take on Kumar as a barista', 'Siti can only do mornings now'. Act on "
+            "it — that is how a shift change actually reaches anyone in a place this size, "
+            "and a change nobody records is one that gets forgotten by Wednesday.\n\n"
+            "You are told a name and a job, and the rest is yours: assume someone can work "
+            "every day the restaurant is open until you hear otherwise, and roster them "
+            "accordingly. Never invent a wage. An hourly rate you made up becomes the labour "
+            "cost in Camelia's report and nobody would know where it came from — if you need "
+            "one, ask for it.\n\n"
+            "If a name could be two people, ask which. Changing the wrong person's days "
+            "rosters somebody who cannot come and leaves somebody who can at home, and "
+            "neither shows up as an error — it shows up on a Friday night, short-staffed.\n\n"
+            "HOW YOU WORK\n"
+            "- `hire` — put someone on the books from a name and a role.\n"
+            "- `set_availability` — change which days and hours someone can work.\n"
+            "- `build_week` — the roster itself: forecast covers, convert to hours by role, "
+            "fit against availability, hours caps and rest. A roster described but not built "
+            "is a week the floor has no cover for.\n\n"
+            "Do what was asked, then build the week if the change affects it. Being told "
+            "somebody cannot work Friday is a reason to rebuild Friday.\n"
         ),
         model_tier="reasoning",
         tools=[
@@ -279,8 +434,28 @@ SHIFT_SCHEDULING_AGENT = register(
                 ),
                 fn=build_week,
                 args_schema=RosterArgs,
-            )
+            ),
+            ToolSpec(
+                name="hire",
+                description=(
+                    "Put someone on the books from a name and a role. Everything else is "
+                    "assumed: available every day, no wage set."
+                ),
+                fn=hire,
+                args_schema=HireArgs,
+            ),
+            ToolSpec(
+                name="set_availability",
+                description=(
+                    "Change which days and hours someone can work. Days are 0-6 with 0 = "
+                    "Monday; an empty list means they cannot work at all."
+                ),
+                fn=set_availability,
+                args_schema=AvailabilityArgs,
+            ),
         ],
+        # Three tools, and the loop spends a turn on each call and each result.
+        max_iterations=9,
         perceive=perceive,
         autonomous=autonomous,
     )

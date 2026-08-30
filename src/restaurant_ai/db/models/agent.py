@@ -149,3 +149,65 @@ class OutboxEvent(UUIDPk, Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str | None] = mapped_column(Text)
     source_run_id: Mapped[str | None] = mapped_column(String(36), index=True)
+
+
+class ConversationTurn(UUIDPk, Base):
+    """One thing said in the approvals chat, by the owner or by Keanu.
+
+    Without this every message was answered alone, and the desk could not follow
+    a conversation: "how much chicken is left?" worked, and "and rice?" meant
+    nothing at all. That is not a small gap in politeness — it is the difference
+    between a search box and someone to talk to.
+
+    It lives in the database rather than in the listener's memory because the
+    listener is restarted: by the supervisor when it dies, by a reboot, by an
+    upgrade. A thread that survives the question and not the restart is worse
+    than none, because it is unpredictable.
+
+    Kept per chat, and read back within a time window — an exchange resumed
+    hours later is a new conversation, and dragging this morning's stock
+    question into tonight's roster question helps nobody.
+    """
+
+    __tablename__ = "conversation_turn"
+
+    chat_id: Mapped[str] = mapped_column(String(40), index=True)
+    role: Mapped[str] = mapped_column(String(10), doc="owner | keanu")
+    text: Mapped[str] = mapped_column(Text)
+    said_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+    __table_args__ = (Index("ix_conversation_chat_time", "chat_id", "said_at"),)
+
+
+class Reminder(UUIDPk, Timestamped, Base):
+    """Something the owner has to do, and the date it stops being optional.
+
+    A restaurant that has traded twenty years runs on things nobody wrote down:
+    the halal certificate expires in March, the fire extinguisher service is due,
+    the landlord wants the lease answer by Friday. They are remembered until the
+    week they are not, and the cost of forgetting one is never small — a lapsed
+    licence closes the door.
+
+    This is the one place the platform holds work that is *the owner's* rather
+    than an agent's. Everything else here is something an agent does; this is
+    something Aziera makes sure a person does.
+
+    ``done_at`` rather than a flag, because when it was dealt with is the
+    question asked afterwards — by an inspector, or by the owner wondering
+    whether they renewed it last year.
+    """
+
+    __tablename__ = "reminder"
+
+    what: Mapped[str] = mapped_column(String(300))
+    due_on: Mapped[date] = mapped_column(Date, index=True)
+    # Free text: "the halal cert takes three weeks, start early".
+    detail: Mapped[str | None] = mapped_column(Text)
+    # Who asked for it — the owner, or an agent that noticed something.
+    raised_by: Mapped[str] = mapped_column(String(60), default="owner")
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When the owner was last told about it, so a daily chase does not become
+    # a daily identical message that gets learned and ignored.
+    last_raised_on: Mapped[date | None] = mapped_column(Date)
+
+    __table_args__ = (Index("ix_reminder_open", "due_on", "done_at"),)

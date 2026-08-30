@@ -75,6 +75,75 @@ class RespondArgs(BaseModel):
     max_responses: int = Field(10, description="Cap on responses drafted in one run.")
 
 
+class DueArgs(BaseModel):
+    days: int = Field(7, description="How far ahead to look, in days.")
+
+
+class RemindArgs(BaseModel):
+    what: str = Field(..., description="What the owner has to do, in their own words.")
+    due_on: str = Field(..., description="When it is due, as YYYY-MM-DD.")
+    detail: str = Field("", description="Anything useful about it. Optional.")
+
+
+class DoneArgs(BaseModel):
+    what: str = Field(..., description="Enough of the reminder's wording to identify it.")
+
+
+def remind_owner(context: ToolContext, what: str, due_on: str, detail: str = "") -> dict[str, Any]:
+    """Write something down that the owner has to do."""
+    from datetime import date as _date
+
+    from restaurant_ai import reminders
+
+    try:
+        when = _date.fromisoformat(due_on.strip())
+    except ValueError:
+        return {"added": False, "note": f"'{due_on}' is not a date I can read. Use YYYY-MM-DD."}
+
+    row = reminders.add(context.session, what=what, due_on=when, detail=detail or None)
+    return {
+        "added": True,
+        "what": row.what,
+        "due_on": row.due_on.isoformat(),
+        "in_days": (row.due_on - context.business_date).days,
+    }
+
+
+def whats_due(context: ToolContext, days: int = 7) -> dict[str, Any]:
+    """What the owner has coming up, and what is already late."""
+    from datetime import timedelta as _delta
+
+    from restaurant_ai import reminders
+
+    items = reminders.due(context.session, within=_delta(days=max(0, days)))
+    return {
+        "count": len(items),
+        "overdue": [i.phrase() for i in items if i.overdue],
+        "coming_up": [i.phrase() for i in items if not i.overdue],
+    }
+
+
+def mark_reminder_done(context: ToolContext, what: str) -> dict[str, Any]:
+    """Close something off once the owner says it is dealt with.
+
+    Ambiguity is reported rather than guessed at: closing the wrong reminder
+    hides work that still has to happen, and nothing will raise it again.
+    """
+    from restaurant_ai import reminders
+
+    matches = reminders.find(context.session, what)
+    if not matches:
+        return {"closed": False, "note": f"Nothing open matches '{what}'."}
+    if len(matches) > 1:
+        return {
+            "closed": False,
+            "note": "That matches more than one — which?",
+            "candidates": [m.what for m in matches[:6]],
+        }
+    reminders.complete(context.session, matches[0].id)
+    return {"closed": True, "what": matches[0].what}
+
+
 def perceive(context: ToolContext) -> dict[str, Any]:
     session = context.session
     recent = list(
@@ -85,12 +154,17 @@ def perceive(context: ToolContext) -> dict[str, Any]:
     unanswered = [r for r in recent if r.response_published_at is None]
     escalated = [r for r in recent if r.is_escalated]
     average = sum(r.rating for r in recent) / len(recent) if recent else 0
+    from restaurant_ai import reminders
+
+    diary = reminders.due(session, on=context.business_date)
     return {
         "reviews_last_7_days": len(recent),
         "average_rating": round(average, 2),
         "unanswered": len(unanswered),
         "escalated": len(escalated),
         "low_rated": len([r for r in recent if r.rating <= 2]),
+        "owner_overdue": [i.phrase() for i in diary if i.overdue],
+        "owner_coming_up": [i.phrase() for i in diary if not i.overdue],
     }
 
 
@@ -317,13 +391,30 @@ def _compose_response(review: Review) -> str:
 
 
 def autonomous(context: ToolContext, perceived: dict[str, Any]) -> dict[str, Any]:
+    """The same two jobs, without a model.
+
+    The diary is the half that must not depend on one. A licence lapses whether
+    or not there is an API key in .env, and an owner who set a reminder is owed
+    it regardless of how the platform happens to be configured that week.
+    """
+    overdue = perceived.get("owner_overdue") or []
+    soon = perceived.get("owner_coming_up") or []
+
+    said = []
+    if overdue:
+        said.append(f"Late: {'; '.join(overdue)}.")
+    if soon:
+        said.append(f"Coming up: {'; '.join(soon)}.")
+    said.append(
+        f"{perceived.get('unanswered', 0)} unanswered review(s) from the last week, "
+        f"average rating {perceived.get('average_rating')}."
+    )
+
     return {
-        "summary": (
-            f"Sweeping review platforms. {perceived.get('unanswered', 0)} unanswered from the "
-            f"last week, average rating {perceived.get('average_rating')}."
-        ),
+        "summary": " ".join(said),
         "results": {},
         "tool_calls": [
+            {"name": "whats_due", "args": {"days": 7}},
             {"name": "sweep_reviews", "args": {"since_hours": 24}},
             {"name": "draft_responses", "args": {"max_responses": 10}},
         ],
@@ -362,14 +453,28 @@ REPUTATION_AGENT = register(
         name="reputation",
         person="Aziera",
         department="front_of_house",
-        title="Feedback & Reputation Agent",
+        title="Secretary",
         description=(
-            "Scans Google Reviews and social channels, writes personalised responses, and "
-            "escalates serious complaints to management."
+            "Keeps the owner's diary — licences, renewals, deadlines, the things nobody "
+            "writes down — and chases them before they are late. Also handles the "
+            "restaurant's correspondence: reads what guests say in public, drafts the "
+            "replies, and escalates serious complaints."
         ),
         system_prompt=(
-            "You are the Feedback and Reputation Agent for a restaurant.\n\n"
-            "You read what guests say about us in public and respond to it.\n\n"
+            "You are Aziera, the Secretary, working for the owner of a restaurant "
+            "that has traded for twenty years.\n\n"
+            "Your first job is the owner's diary. A place like this runs on things "
+            "nobody wrote down — the halal certificate expires in March, the "
+            "extinguisher service is due, the landlord wants an answer by Friday. They "
+            "live in someone's head and are remembered every week except the week that "
+            "matters, and a lapsed licence closes the door. You hold them, and you "
+            "chase.\n\n"
+            "Chase like a secretary, not like an alarm clock. Say what is late first "
+            "and plainly — that is the part that has already cost something. Raise what "
+            "is coming once, as it approaches. Never repeat the same list every morning "
+            "unchanged: a reminder the owner learns to skip is one they do not have.\n\n"
+            "Your second job is what guests say about us in public, and what we say "
+            "back.\n\n"
             "How to reply:\n"
             "- Reference what they actually said. A generic 'sorry to hear that' reads as "
             "automated and makes things worse.\n"
@@ -380,6 +485,21 @@ REPUTATION_AGENT = register(
             "manager immediately whatever the star rating. Those are safety and liability "
             "matters, not reputation ones.\n\n"
             "A published reply is permanent and public. When in doubt, hold it for a human."
+            "HOW YOU WORK\n"
+            "1. `whats_due` — look at the owner's diary, every run. It is the job they "
+            "cannot do for themselves, and the run they do not see is the week something "
+            "lapses.\n"
+            "2. `remind_owner` — write down whatever they ask you to remember, and "
+            "anything you notice with a date on it.\n"
+            "3. `mark_reminder_done` — close it off when they say it is dealt with. If "
+            "the wording matches more than one, ask which: closing the wrong one hides "
+            "work that still has to happen, and nothing will raise it again.\n"
+            "4. `sweep_reviews` — pull what is new, classify it, escalate the serious ones.\n"
+            "5. `draft_responses` — reply to what is still unanswered.\n"
+            "\n"
+            "A review read and not answered is a guest who was ignored in\n"
+            "public. Positive replies publish; anything poor waits for the owner, because an\n"
+            "angry guest deserves a person's judgement and not yours.\n"
         ),
         model_tier="conversational",
         tools=[
@@ -390,7 +510,30 @@ REPUTATION_AGENT = register(
                 args_schema=SweepArgs,
             ),
             _respond_tool,
+            ToolSpec(
+                name="whats_due",
+                description=(
+                    "What the owner has coming up and what is already late — their diary, "
+                    "not the restaurant's."
+                ),
+                fn=whats_due,
+                args_schema=DueArgs,
+            ),
+            ToolSpec(
+                name="remind_owner",
+                description="Write down something the owner has to do, and when it is due.",
+                fn=remind_owner,
+                args_schema=RemindArgs,
+            ),
+            ToolSpec(
+                name="mark_reminder_done",
+                description="Close off a reminder once the owner says it is dealt with.",
+                fn=mark_reminder_done,
+                args_schema=DoneArgs,
+            ),
         ],
+        # Five tools: a turn to call each and a turn to read each result.
+        max_iterations=11,
         perceive=perceive,
         autonomous=autonomous,
     )

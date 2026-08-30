@@ -27,21 +27,25 @@ Two properties matter more than the parsing:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from restaurant_ai.db.base import money, qty
 from restaurant_ai.db.models import (
     Allergen,
+    Availability,
     Ingredient,
     MenuItem,
     MenuSection,
     Recipe,
     RecipeComponent,
+    ShiftRole,
+    Staff,
     Station,
     StockItem,
     Supplier,
@@ -51,9 +55,19 @@ from restaurant_ai.logging_setup import get_logger
 
 log = get_logger(__name__)
 
-SHEETS = ("Suppliers", "Ingredients", "SubRecipes", "BOM", "Menu", "Allergens")
+SHEETS = ("Suppliers", "Staff", "Ingredients", "SubRecipes", "BOM", "Menu", "Allergens")
 
 _STATIONS = {station.value for station in Station}
+_ROLES = {role.value for role in ShiftRole}
+
+
+def _clock(text: str) -> time:
+    """ "10:00" as a time. Spreadsheets hand this back three different ways."""
+    if isinstance(text, time):
+        return text
+    cleaned = str(text).strip()
+    hour, _, minute = cleaned.partition(":")
+    return time(int(hour), int(minute or 0))
 
 
 class CatalogImportError(Exception):
@@ -189,6 +203,84 @@ def import_catalog(
                 "is_active": True,
             },
         )
+    session.flush()
+
+    # --- Staff, and when they can work ---------------------------------------
+    # Henry could never be given a roster to build. `readiness` told the owner
+    # "Henry needs who works here, their roles, and when they can work" and
+    # there was no sheet, no command and no way to say it — advice for a thing
+    # that could not be done.
+    #
+    # Availability lives on the same row rather than a sheet of its own. A
+    # mamak's staff work the same hours most days, and a second sheet keyed by
+    # employee code is a second chance to typo the code.
+    for line, row in _rows(workbook, "Staff"):
+        where = f"Staff row {line}"
+        code, name = _text(row, "code"), _text(row, "name")
+        if not code or not name:
+            errors.append(f"{where}: 'code' and 'name' are required.")
+            continue
+        role = _text(row, "role").lower().replace(" ", "_")
+        if role not in _ROLES:
+            errors.append(f"{where}: role {role!r} is not one of {', '.join(sorted(_ROLES))}.")
+            continue
+
+        # Only the code, the name and the role are asked for. Everything else is
+        # Henry's to work out or the owner's to say later in a message: an owner
+        # who has to fill in ten columns before the roster agent will look at
+        # anyone fills in nobody, and a wage typed into a spreadsheet to satisfy
+        # a validator is worse than a wage the system admits it does not know.
+        member = _upsert(
+            session,
+            Staff,
+            {"employee_code": code},
+            {
+                "name": name,
+                "role": role,
+                # Zero means unknown, and `readiness` says so rather than
+                # letting labour cost look free.
+                "hourly_rate": money(_number(row, "hourly_rate", errors, where) or 0),
+                "max_weekly_hours": _integer(row, "max_weekly_hours", errors, where) or 48,
+                "min_rest_hours": _integer(row, "min_rest_hours", errors, where) or 11,
+                "phone": _text(row, "phone") or None,
+                "is_active": True,
+            },
+        )
+        session.flush()
+
+        # Available every day the restaurant is open unless told otherwise. A
+        # roster built from "everyone can work" and corrected by the owner beats
+        # one that cannot be built because nobody filled in the hours.
+        days = _text(row, "days") or "0,1,2,3,4,5,6"
+        start, end = _text(row, "from") or "10:00", _text(row, "to") or "23:59"
+        try:
+            opens, closes = _clock(start), _clock(end)
+        except ValueError:
+            errors.append(f"{where}: 'from'/'to' must look like 10:00, not {start!r}/{end!r}.")
+            continue
+        # Rewritten wholesale, so an edited spreadsheet is the truth rather than
+        # something added to what was there before.
+        #
+        # Deleted and flushed rather than cleared: `clear()` leaves the removals
+        # pending, and SQLAlchemy inserts the new rows before it issues the
+        # deletes — so re-importing an unchanged sheet collides with the unique
+        # constraint on (staff, weekday, start).
+        # A bulk delete goes round the session, so the rows it removed are still
+        # in this object's collection and SQLAlchemy re-inserts them on the next
+        # flush. Expiring the collection makes it re-read what is actually there.
+        session.execute(delete(Availability).where(Availability.staff_id == member.id))
+        session.expire(member, ["availability"])
+        session.flush()
+        for part in days.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if not part.isdigit() or not 0 <= int(part) <= 6:
+                errors.append(f"{where}: 'days' takes 0-6 (0 = Monday), not {part!r}.")
+                continue
+            member.availability.append(
+                Availability(weekday=int(part), start_time=opens, end_time=closes)
+            )
     session.flush()
 
     # --- Ingredients (with their preferred supplier pack) --------------------
@@ -514,6 +606,7 @@ def import_catalog(
 
     summary.counts = {
         "suppliers": len(_rows(workbook, "Suppliers")),
+        "staff": len(_rows(workbook, "Staff")),
         "ingredients": len(_rows(workbook, "Ingredients")),
         "sub_recipes": len(sub_recipe_codes),
         "menu_items": len(menu_skus),
@@ -587,6 +680,33 @@ _TEMPLATE: dict[str, tuple[list[str], list[list[Any]]]] = {
                 150,
                 "0,2,4",
             ],
+        ],
+    ),
+    "Staff": (
+        [
+            "code",
+            "name",
+            "role",
+            "hourly_rate",
+            "max_weekly_hours",
+            "min_rest_hours",
+            "phone",
+            "days",
+            "from",
+            "to",
+        ],
+        [
+            # Only the first three columns are needed. Left blank, Henry assumes
+            # available every day the restaurant is open and takes corrections by
+            # message — "Ahmad cannot work Fridays" — which is how a shift change
+            # actually reaches anyone in a place this size.
+            #
+            # Availability sits on the same row rather than a sheet of its own: a
+            # second sheet keyed by employee code is a second chance to mistype
+            # the code.
+            ["EMP-001", "Ahmad", "server", "", "", "", "", "", "", ""],
+            ["EMP-002", "Siti", "chef", "", "", "", "", "", "", ""],
+            ["EMP-003", "Kumar", "barista", 10.00, 44, 11, "", "0,1,2,3,4", "11:00", "23:00"],
         ],
     ),
     "Ingredients": (

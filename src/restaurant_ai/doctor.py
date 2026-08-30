@@ -41,6 +41,113 @@ class Diagnosis:
         self.checks.append(Check(name=name, ok=ok, detail=detail, fix=fix))
 
 
+def _read_env_file(path: Any) -> dict[str, str]:
+    """The file's own view of the settings, for comparison against the live ones.
+
+    Deliberately not a dotenv parser: no interpolation, no export, no multi-line
+    values. It exists to answer "does the environment disagree with the file",
+    and a line it cannot read is a line it should not have an opinion about.
+    """
+    found: dict[str, str] = {}
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return found
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        name = name.strip()
+        value = value.strip().strip("\"'")
+        if name.isidentifier():
+            found[name.upper()] = value
+    return found
+
+
+def _check_configuration(report: Diagnosis) -> None:
+    """Which .env is being read, and does it say what the owner thinks it says?
+
+    Three ways an edit to .env silently does nothing, all of them seen in the
+    wild, none of them producing an error:
+
+    - ``env_file=".env"`` resolves against the *working directory*, not the
+      project folder. Run from one folder up and a different file is read, or
+      none, and every setting falls back to its default.
+    - A real environment variable **outranks the file**. Once ``LLM_PROVIDER``
+      is set in the shell, the file is read and then overridden for the life of
+      that window, and editing it will never help.
+    - Windows hides known extensions, so "save as .env" in Notepad produces
+      ``.env.txt``, which looks right in Explorer and is invisible to the loader.
+
+    The provider mismatch below is the fourth. Putting ANTHROPIC_API_KEY in .env
+    and leaving LLM_PROVIDER=google is the natural halfway point of a switch, it
+    looks finished, and the only sign is a provider name in a log line nobody
+    reads.
+    """
+    import os
+    from pathlib import Path
+
+    settings = get_settings()
+    here = Path.cwd()
+    env = here / ".env"
+    if env.exists():
+        report.add("settings file", True, f"reading {env}")
+    else:
+        # Say what *is* there before saying what is not. A near miss is the
+        # likeliest explanation and the one hardest to see in Explorer.
+        near = sorted(
+            p.name for p in here.glob(".env*") if p.is_file() and p.name not in (".env.example",)
+        )
+        detail = f"no .env in {here} — every setting is at its default"
+        fix = (
+            "Commands read `.env` from the folder you run them in. Change to the project "
+            "folder first, or copy .env there."
+        )
+        if near:
+            detail += f"; found {', '.join(near)}"
+            fix = (
+                f"{', '.join(near)} is not read — the file must be named exactly `.env`. "
+                "Windows hides known extensions, so a file saved from Notepad is usually "
+                "`.env.txt`. Rename it with: Rename-Item .env.txt .env"
+            )
+        report.add("settings file", False, detail, fix)
+
+    # An environment variable outranking the file is normal — compose passes
+    # every setting that way. It is only a fault when the two *disagree*, which
+    # is the case where editing the file changes nothing and says nothing.
+    disagreeing = []
+    if env.exists():
+        for key, value in _read_env_file(env).items():
+            live = os.environ.get(key)
+            if live is not None and live != value:
+                # doctor output gets pasted into chats and issues. A secret is
+                # named, never quoted — on either side of the disagreement.
+                secret = "KEY" in key or "TOKEN" in key
+                shown = key if secret else f"{key}={live} (the file says {value})"
+                disagreeing.append(shown)
+    if disagreeing:
+        report.add(
+            "environment",
+            False,
+            f"the environment overrides .env: {', '.join(disagreeing)}",
+            "A shell variable outranks the file, so editing .env cannot change these. "
+            "Close this terminal and open a new one, then start again from the project "
+            "folder.",
+        )
+
+    keys = {"anthropic": settings.anthropic_api_key, "google": settings.google_api_key}
+    unused = [name for name, key in keys.items() if key and name != settings.llm_provider]
+    if unused:
+        report.add(
+            "provider",
+            False,
+            f"LLM_PROVIDER={settings.llm_provider}, but a key for {', '.join(unused)} is also set",
+            f"A key alone changes nothing — the provider chooses. Set "
+            f"LLM_PROVIDER={unused[0]} in .env and restart, or remove the unused key.",
+        )
+
+
 def _check_database(report: Diagnosis) -> None:
     try:
         from sqlalchemy import func, select
@@ -56,7 +163,10 @@ def _check_database(report: Diagnosis) -> None:
             "database",
             False,
             f"{type(exc).__name__}: {exc}",
-            "Start it with `make up`, then `make migrate` and `make seed`.",
+            # `make` is a developer's tool and this is the owner's message: on the
+            # machine where the database is actually unreachable there is no make.
+            "Start it with `restaurant-ai up`, which starts Postgres and applies the "
+            "schema itself.",
         )
 
 
@@ -84,34 +194,122 @@ def _check_trading_data(report: Diagnosis) -> None:
     )
 
 
+def _check_dashboard(report: Diagnosis) -> None:
+    """Whether the dashboard would serve anyone, including the owner.
+
+    Unset, APPROVAL_API_KEY makes the dashboard, the system map and the approval
+    endpoints refuse every request — which is the right way round, because the
+    alternative is serving the restaurant's numbers to anyone who finds the
+    address. But nothing said so anywhere: the pages simply do not load, and
+    every other check is green.
+
+    It is also what `up --with-tunnel` refuses on, so an owner reaching for a
+    public address meets it there instead, at the moment they are furthest from
+    the file that fixes it.
+    """
+    settings = get_settings()
+    if settings.approval_api_key:
+        report.add("dashboard", True, "guarded by APPROVAL_API_KEY")
+        return
+    report.add(
+        "dashboard",
+        False,
+        "APPROVAL_API_KEY is not set — the dashboard and system map refuse to serve",
+        "This is a password you choose. Add a long random value to .env as "
+        "APPROVAL_API_KEY; the links then carry it, so treat them like the password "
+        "they are.",
+    )
+
+
 def _check_model(report: Diagnosis) -> None:
+    """Ask each configured model something, because configured is not working.
+
+    A key that is right and a free tier that is spent look identical from the
+    settings; an Ollama host in .env looks identical whether or not anything is
+    listening on it. Only a real call tells them apart.
+
+    When a deployment splits the providers, *both* are called. Checking only the
+    one the owner talks to leaves the machine doing four fifths of the work
+    untested, and that is precisely the half whose failure is silent — the chat
+    keeps answering while every scheduled agent quietly stops thinking.
+    """
     from restaurant_ai.kernel import llm
 
     described = llm.describe_provider()
-    if described.get("provider") == "fake":
-        report.add(
-            "language model",
-            True,
-            "fake — agents run their code, but nothing reasons",
-            "Set LLM_PROVIDER and the matching API key in .env to use a real model.",
-        )
-        return
-    # Configured is not the same as working. A key that is right and a free tier
-    # that is spent look identical from the settings, and only one of them can
-    # answer a question — so ask it something and see.
-    name = f"{described.get('provider')} — {described.get('conversational', '?')}"
-    try:
-        from langchain_core.messages import HumanMessage
+    split = bool(described.get("interactive_provider"))
 
-        reply = llm.get_model("conversational", interactive=True).invoke(
-            [HumanMessage(content="Reply with the single word: ok")]
-        )
-        del reply
-        report.add("language model", True, f"{name}, answering")
-    except Exception as exc:
-        from restaurant_ai.assistant import explain_model_failure
+    # (label, interactive) — one entry unless the deployment splits them.
+    calls: list[tuple[str, bool]] = (
+        [("language model (agents)", False), ("language model (chat)", True)]
+        if split
+        else [("language model", True)]
+    )
 
-        report.add("language model", False, f"{name} — {exc}", explain_model_failure(exc))
+    for label, interactive in calls:
+        if llm.is_fake(interactive=interactive):
+            report.add(
+                label,
+                True,
+                "fake — agents run their code, but nothing reasons",
+                "Set LLM_PROVIDER and the matching API key in .env to use a real model.",
+            )
+            continue
+
+        provider = llm.provider_for(interactive=interactive)
+        name = f"{provider} — {llm.model_name('conversational', interactive=interactive)}"
+        try:
+            from langchain_core.messages import HumanMessage
+
+            reply = llm.get_model("conversational", interactive=interactive).invoke(
+                [HumanMessage(content="Reply with the single word: ok")]
+            )
+            del reply
+            detail = f"{name}, answering"
+            if provider == "ollama":
+                # Asked after the call, so something is loaded to ask about.
+                placement = llm.ollama_placement()
+                if placement:
+                    detail += f", {placement}"
+            report.add(label, True, detail)
+        except Exception as exc:
+            from restaurant_ai.assistant import explain_model_failure
+
+            report.add(label, False, f"{name} — {exc}", explain_model_failure(exc))
+
+
+def _token_shape(token: str) -> str:
+    """What is visibly wrong with a token, without ever printing it.
+
+    "The token is wrong or revoked" is true of every rejection and useful for
+    almost none of them. A token copied out of a chat message arrives with the
+    sentence's full stops attached, or a stray space, or half of it — and each
+    of those is a different fix from "get a new one from BotFather", which is
+    the advice that sends an owner round the loop they just completed.
+
+    BotFather issues ``<digits>:<35 characters>``. Everything below is a shape
+    that cannot be a token whatever BotFather said, so it can be reported before
+    blaming the token itself.
+    """
+    import re
+
+    if token != token.strip():
+        return "it has a space or newline at one end — the quotes caught more than the token"
+    if token.endswith("."):
+        return "it ends in a full stop — copied out of a sentence, the trailing dots came too"
+    if ":" not in token:
+        return "there is no colon in it — a token is <digits>:<letters>, so this is a fragment"
+
+    bot_id, _, secret = token.partition(":")
+    if not bot_id.isdigit():
+        return "the part before the colon is not a number — that half is the bot's id"
+    if len(secret) != 35:
+        return (
+            f"the part after the colon is {len(secret)} characters, and BotFather issues 35 "
+            "— it was cut short or something came with it"
+        )
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", secret):
+        return "it has characters a token never contains — something was pasted in with it"
+    return ""
 
 
 def _check_telegram(report: Diagnosis) -> None:
@@ -146,11 +344,20 @@ def _check_telegram(report: Diagnosis) -> None:
         )
         return
     except TelegramRejected as exc:
+        # Look at what was sent before blaming what BotFather issued: a malformed
+        # token and a revoked one are refused identically, and only one of them
+        # is fixed by fetching another.
+        malformed = _token_shape(settings.telegram_bot_token)
         report.add(
             "telegram bot",
             False,
             str(exc),
-            "The token is wrong or revoked. Get a fresh one from BotFather with /token.",
+            (
+                f"The token cannot be right: {malformed}. Fix that before asking "
+                "BotFather for another."
+                if malformed
+                else "The token is wrong or revoked. Get a fresh one from BotFather with /token."
+            ),
         )
         return
 
@@ -227,15 +434,23 @@ def _check_listener(report: Diagnosis, api: Any) -> None:
         "listener",
         False,
         detail,
-        "Start it with `restaurant-ai telegram-listen`, and leave it running — "
-        "close that terminal and the bot goes deaf again.",
+        # `telegram-listen` starts the listener and nothing else, which was the
+        # only way once and is now the narrow one: the bot answers while beat
+        # never fires, so the morning prep, the nightly close and the brief all
+        # silently do not happen. `up` is the whole restaurant, and it is what
+        # this should have been naming since `up` existed.
+        "Start the restaurant with `restaurant-ai up`, and leave that window open — "
+        "close it and the bot goes deaf again. (`restaurant-ai telegram-listen` runs "
+        "the listener alone, which answers messages but never fires the schedule.)",
     )
 
 
 def diagnose() -> Diagnosis:
     """Run every check. Never changes anything."""
     report = Diagnosis()
+    _check_configuration(report)
     _check_database(report)
+    _check_dashboard(report)
     _check_trading_data(report)
     _check_model(report)
     _check_telegram(report)

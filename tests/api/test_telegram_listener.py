@@ -310,7 +310,8 @@ class TestTheOwnerCanAsk:
 
     def test_a_question_is_answered_into_the_same_chat(self, db, telegram, monkeypatch):
         monkeypatch.setattr(
-            "restaurant_ai.assistant.answer", lambda q, session=None: f"answering: {q}"
+            "restaurant_ai.assistant.answer",
+            lambda q, session=None, history=None: f"answering: {q}",
         )
         described = listener.handle_update(say("how much chicken do we have?"))
 
@@ -372,7 +373,8 @@ class TestWhoMayAsk:
 
     def test_a_stranger_gets_no_answer(self, db, telegram, monkeypatch):
         monkeypatch.setattr(
-            "restaurant_ai.assistant.answer", lambda q, session=None: "should never be called"
+            "restaurant_ai.assistant.answer",
+            lambda q, session=None, history=None: "should never be called",
         )
         with pytest.raises(listener.UnauthorisedPresser):
             listener.handle_update(say("what are today's takings?", chat="111", user=222))
@@ -425,8 +427,10 @@ def routes(monkeypatch):
     from restaurant_ai.assistant import Intent
 
     box = {"intent": Intent(kind="question")}
-    monkeypatch.setattr("restaurant_ai.assistant.route", lambda text: box["intent"])
-    monkeypatch.setattr("restaurant_ai.assistant.answer", lambda q, session=None: f"answering: {q}")
+    monkeypatch.setattr("restaurant_ai.assistant.route", lambda text, history=None: box["intent"])
+    monkeypatch.setattr(
+        "restaurant_ai.assistant.answer", lambda q, session=None, history=None: f"answering: {q}"
+    )
     return box
 
 
@@ -552,7 +556,7 @@ class TestItNeverGoesQuiet:
         )
         monkeypatch.setattr(
             "restaurant_ai.assistant.route",
-            lambda text: (_ for _ in ()).throw(RuntimeError("the model is on fire")),
+            lambda text, history=None: (_ for _ in ()).throw(RuntimeError("the model is on fire")),
         )
 
         offset, handled = listener.poll_once(None)
@@ -614,7 +618,8 @@ class TestLoggingWhatSold:
         assert described.startswith("sold: proposed")
         card = [p for m, p in telegram if m == "sendMessage"][0]
         assert "Nasi Lemak Biasa" in card["text"]
-        assert "RM 207.50" in card["text"]
+        # 20 nasi lemak biasa at 4.00 + 35 teh tarik at 2.50, per the printed menu.
+        assert "RM 167.50" in card["text"]
         assert card["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "sold:go"
 
     def test_nothing_is_written_until_the_press(self, real_menu, telegram):
@@ -670,3 +675,79 @@ class TestLoggingWhatSold:
     def test_sold_with_nothing_after_it_shows_the_shape(self, real_menu, telegram):
         listener.handle_update(say("/sold"))
         assert "nasi lemak" in [p for m, p in telegram if m == "sendMessage"][0]["text"]
+
+
+class TestGreetingsAreAnsweredFree:
+    def test_hey_gets_a_reply_without_a_model(self, db, telegram, monkeypatch):
+        monkeypatch.setattr(
+            "restaurant_ai.assistant.answer",
+            lambda q, session=None, history=None: pytest.fail("a greeting must not reach the desk"),
+        )
+        described = listener.handle_update(say("hey"))
+
+        assert described == "greeted"
+        text = [p for m, p in telegram if m == "sendMessage"][0]["text"]
+        assert "/agents" in text
+
+
+class TestLoggingSalesByJustSaying:
+    """Typing `/sold` every night for the rest of the year is a tax on the one
+    habit this system most needs the owner to keep."""
+
+    @pytest.fixture
+    def real_menu(self, db):
+        from restaurant_ai.db.catalog_import import import_catalog
+
+        import_catalog(
+            db, "menu/the-great-invention-menu.xlsx", allow_uncosted=True, replace_menu=True
+        )
+        return db
+
+    def _sold_intent(self, monkeypatch):
+        from restaurant_ai.assistant import Intent
+
+        monkeypatch.setattr(
+            "restaurant_ai.assistant.route",
+            lambda text, history=None: Intent(kind="sold"),
+        )
+
+    def test_a_plain_sentence_offers_the_same_card(self, real_menu, telegram, monkeypatch):
+        self._sold_intent(monkeypatch)
+
+        listener.handle_update(say("20 nasi lemak biasa, 35 teh tarik, 90 covers"))
+
+        card = [p for m, p in telegram if m == "sendMessage"][-1]
+        assert "Recording today as" in card["text"]
+        assert "RM 167.50" in card["text"]
+        assert card["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "sold:go"
+
+    def test_nothing_is_written_without_the_press(self, real_menu, telegram, monkeypatch):
+        """The whole reason this can be read from a chat message at all."""
+        from sqlalchemy import func, select
+
+        from restaurant_ai.db.models import OrderHeader
+
+        before = real_menu.execute(select(func.count()).select_from(OrderHeader)).scalar_one()
+        self._sold_intent(monkeypatch)
+
+        listener.handle_update(say("20 nasi lemak biasa, 35 teh tarik"))
+
+        after = real_menu.execute(select(func.count()).select_from(OrderHeader)).scalar_one()
+        assert after == before
+
+    def test_the_slash_command_still_works(self, real_menu, telegram, monkeypatch):
+        """Both paths reach the same place; the owner should not have to
+        remember which one this system wanted."""
+        listener.handle_update(say("/sold 20 nasi lemak biasa, 35 teh tarik"))
+
+        card = [p for m, p in telegram if m == "sendMessage"][-1]
+        assert "Recording today as" in card["text"]
+
+    def test_an_unreadable_dish_is_reported_rather_than_recorded(self, db, telegram, monkeypatch):
+        self._sold_intent(monkeypatch)
+
+        listener.handle_update(say("20 flying spaghetti monster"))
+
+        said = [p for m, p in telegram if m == "sendMessage"][-1]["text"]
+        assert "not on the menu" in said
+        assert "Nothing was written" in said

@@ -329,6 +329,12 @@ DAILY_PERFORMANCE_AGENT = register(
             "know which they are looking at.\n\n"
             "Be direct about bad numbers. A report that softens a 72% prime cost is worse than "
             "no report. Keep it short enough to read standing up."
+            "HOW YOU WORK\n"
+            "1. `compile_report` — compute the day's revenue, prime cost, ratios and variance.\n"
+            "2. `render_report` — turn that into the text a person reads.\n"
+            "\n"
+            "Both. A compiled report nobody rendered is a calculation the owner never sees,\n"
+            "and this is the run that becomes their nightly brief.\n"
         ),
         model_tier="reasoning",
         tools=[

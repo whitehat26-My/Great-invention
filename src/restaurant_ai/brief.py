@@ -1,6 +1,6 @@
 """The owner's daily brief.
 
-Eleven agents write their work into the database and Camelia closes the day —
+The agents write their work into the database and Camelia closes the day —
 but the results were scattered across a CLI, a REST API and an approvals chat.
 Nobody stitched them into the one thing an owner actually reads.
 
@@ -266,6 +266,19 @@ def build_brief(session: Session, business_date: date | None = None) -> Brief:
             )
     except Exception as exc:
         brief.needs_you.append(f"could not list pending approvals ({exc})")
+
+    # --- The owner's own diary -----------------------------------------------
+    # An approval is work an agent has prepared and a person must decide. These
+    # are the opposite: work only the owner can do, that no agent will ever pick
+    # up. They belong in the same place, because the brief is the one thing that
+    # reliably gets read — and a reminder nobody reads is not a reminder.
+    try:
+        from restaurant_ai import reminders
+
+        for item in reminders.due(session, on=day):
+            brief.needs_you.append(f"{'LATE — ' if item.overdue else ''}{item.phrase()}")
+    except Exception as exc:
+        brief.needs_you.append(f"could not read the diary ({exc})")
 
     return brief
 

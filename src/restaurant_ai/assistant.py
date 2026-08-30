@@ -99,37 +99,101 @@ def build_snapshot(session: Session, business_date: date | None = None) -> dict[
 
 
 def _system_prompt(snapshot: dict[str, Any]) -> str:
+    """Who Keanu is, before what he is for.
+
+    This used to open with "You answer the owner's questions" and "you are the
+    question desk", and identity came third. A model does what the first line
+    tells it to be, so it behaved like a desk: correct, complete and cold, every
+    reply a small report.
+
+    The examples matter more than the adjectives. "Be warm and direct" is an
+    instruction a large model can act on and a small one can only agree with;
+    two exchanges showing the difference are worth more than a paragraph of
+    description, because they can be copied rather than interpreted.
+    """
     settings = get_settings()
-    return f"""You answer the owner's questions about {settings.restaurant_name}.
+    return f"""You are Keanu. You run the floor for the owner of
+{settings.restaurant_name} — a mamak that has traded for twenty years. You are
+their right hand: the person who knows the numbers, says what they mean, and is
+trusted to say when something is wrong.
 
-You are the question desk for a restaurant run by a team of AI agents. The owner
-is asking you from their phone, in the same chat where approval cards arrive.
+Talk like that. Direct, professional, brief. No greeting on every message, no
+"I hope this helps", no repeating their question back at them. You are a
+colleague reporting, not a service answering.
 
-WHAT YOU CAN DO
-Answer from the snapshot below, which is what the agents themselves currently
-see. Money is in {settings.currency_symbol}. Times are {settings.timezone}.
+Malay, English, or both in one sentence — follow whatever they use.
+
+HOW YOU TALK
+
+Acknowledge briefly and move on. "Noted." "Understood." "Done." Never a
+paragraph confirming what they just told you, and never a summary of their own
+message read back to them.
+
+    them: how much chicken left?
+    you:  12kg. Enough for tomorrow, tight if Saturday is busy.
+
+    them: 20 nasi lemak, 35 teh tarik today
+    you:  Noted. RM 167.50 across 55 covers — below a normal Tuesday.
+
+    them: busy tonight
+    you:  60 covers by 8pm. Ahead of last week.
+
+Lead with the number, then what it means. An observation the owner has not
+asked for is worth more than a number they have: "the chicken will not last the
+weekend" beats "12kg" every time. Say it plainly when something is wrong — you
+are trusted to raise it, not to soften it.
+
+If you do not know, say so, and say what would tell you.
+
+WHERE YOUR NUMBERS COME FROM
+
+Two sources, and they do not always agree.
+
+1. **What the owner tells you.** Figures in this conversation, corrections,
+   overrides: "the till was down, we did 3,200 tonight".
+2. **The database.** POS sales and stock levels, plus anything already
+   recorded.
+
+**The owner's figure wins.** They were standing in the room; the database was
+not. When you use a figure they gave you over one the system holds, use theirs
+— and say that you are, and what the record says instead. Never silently
+replace the books with a remark, and never argue with the person who was there.
+
+    them: we did 3,200 tonight, the till was playing up
+    you:  Noted — 3,200. The system has 2,410 recorded, so 790 has not come
+          through. Worth checking the till before close.
+
+If they have said nothing about it, the database is the answer.
 
 WHAT YOU CANNOT DO
-You cannot change anything — you have no tools, and nothing you say takes
-effect. If the owner asks you to order stock, change a price, publish a post or
-move a shift, say plainly that you cannot do it from here, name the agent whose
-job it is, and remind them it arrives as a card to approve. Never imply that
-something has been done.
 
-HOW TO ANSWER
-- Be short. This is read on a phone: a few sentences, not an essay.
-- Use the numbers in the snapshot. Never invent one.
-- If the snapshot does not contain the answer, say so and say what would.
-- A view marked "unavailable" is broken, not empty — say that rather than
-  reporting zero.
-- Plain language a restaurant owner uses, not JSON field names.
+You cannot change anything. No tools, and nothing you say takes effect. Asked to
+order stock, change a price, publish a post or move a shift: say plainly you
+cannot do it from here, name whose job it is — Rain for stock, Irma for pricing,
+Franky for posts, Henry for the roster, Aziera for your diary — and that it
+reaches you as a card to approve. Never imply something has been done.
 
-THE RESTAURANT RIGHT NOW
+WHAT YOU KNOW
+
+Everything below, and nothing else. Never invent a number. Money is in
+{settings.currency_symbol}; times are {settings.timezone}. A view marked
+"unavailable" is broken, not empty — say that rather than reporting zero. Use
+the words a restaurant owner uses, never the field names.
+
 {json.dumps(snapshot, indent=1, default=str)}"""
 
 
-def answer(question: str, session: Session | None = None) -> str:
-    """Answer one question about the restaurant. Never changes anything."""
+def answer(
+    question: str,
+    session: Session | None = None,
+    history: list[Any] | None = None,
+) -> str:
+    """Answer one question about the restaurant. Never changes anything.
+
+    ``history`` is the recent exchange, oldest first, so a follow-up is read as
+    a follow-up. Without it every message arrived alone and "and rice?" was
+    unanswerable — which is the difference between a search box and a colleague.
+    """
     from restaurant_ai.db.base import session_scope
     from restaurant_ai.kernel import llm
     from restaurant_ai.kernel.graph import _message_text
@@ -144,18 +208,29 @@ def answer(question: str, session: Session | None = None) -> str:
         with session_scope() as scoped:
             snapshot = build_snapshot(scoped)
 
-    if llm.is_fake():
+    if llm.is_fake(interactive=True):
         # No model configured: say what is known rather than inventing prose.
         return _offline_answer(question, snapshot)
 
-    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+    from restaurant_ai.memory import KEANU
 
     # No tools are bound. This model cannot act on the restaurant.
+    conversation: list[Any] = [SystemMessage(content=_system_prompt(snapshot))]
+    for turn in history or []:
+        role = getattr(turn, "role", None)
+        text = getattr(turn, "text", "")
+        if not text:
+            continue
+        conversation.append(
+            AIMessage(content=text) if role == KEANU else HumanMessage(content=text)
+        )
+    conversation.append(HumanMessage(content=question))
+
     try:
         model = llm.get_model("conversational", interactive=True)
-        response = model.invoke(
-            [SystemMessage(content=_system_prompt(snapshot)), HumanMessage(content=question)]
-        )
+        response = model.invoke(conversation)
     except Exception as exc:
         log.warning("answering failed", error=str(exc))
         return explain_model_failure(exc)
@@ -177,6 +252,64 @@ def explain_model_failure(exc: Exception) -> str:
     detail = str(exc)
     lowered = detail.lower()
 
+    # Not a provider failure at all: the client library for this provider is not
+    # installed. It reads like one because it surfaces from the same call, and
+    # every other message here would send the owner to check a key, a network or
+    # a quota that has nothing to do with it.
+    #
+    # It happens on exactly one path, and that path is the common one: a `git
+    # pull` brings code that needs a package the environment does not have, and
+    # nothing installs it. Adding any future provider adds a dependency, so this
+    # is not specific to the one that revealed it.
+    if isinstance(exc, ModuleNotFoundError) or "no module named" in lowered:
+        missing = getattr(exc, "name", "") or "a provider package"
+        return (
+            f"The library for this provider is not installed ({missing}).\n\n"
+            "Nothing is wrong with the model, the key or the network — the code was "
+            "updated and the packages were not. From the project folder, in the "
+            "virtualenv:\n\n"
+            "    pip install -e ."
+        )
+
+    # A local model fails in ways a hosted one cannot, and shares vocabulary
+    # with ways it can. "Timed out" from Ollama is a CPU thinking, not a spent
+    # quota — so these are answered first or the advice below is confidently
+    # wrong about a machine that has no quota to spend.
+    from restaurant_ai.kernel import llm
+
+    if llm.provider_for() == "ollama" or llm.provider_for(interactive=True) == "ollama":
+        host = get_settings().ollama_host
+        if "connection" in lowered or "refused" in lowered or "connect" in lowered:
+            return (
+                f"The local model is not answering at {host}.\n\n"
+                "Ollama is either not installed or not running. Open it from the Start "
+                "menu, or check with `ollama list` in a new terminal — a window opened "
+                "before Ollama was installed will not have found it yet."
+            )
+        if "not found" in lowered or "no such model" in lowered or "try pulling" in lowered:
+            return (
+                "That model is not on this machine yet. Pull it once with "
+                "`ollama pull hermes3` — about 5GB, and it only happens the first "
+                "time.\n\n"
+                "`restaurant-ai models` lists what is already here."
+            )
+        if "memory" in lowered or "out of memory" in lowered:
+            return (
+                "This machine does not have enough free memory for that model. A "
+                "smaller one fits: `ollama pull hermes3:3b`, then set "
+                "OLLAMA_MODEL_REASONING and OLLAMA_MODEL_CONVERSATIONAL to it in .env."
+            )
+        if "timeout" in lowered or "timed out" in lowered or "deadline" in lowered:
+            # No quota exists locally, so the hosted explanation below would be
+            # nonsense here. On a CPU this is simply how long it takes.
+            return (
+                "The local model did not finish in time. On a CPU that is normal rather "
+                "than broken — an answer can take minutes.\n\n"
+                "For questions you wait on, LLM_PROVIDER_INTERACTIVE=anthropic in .env "
+                "sends just the chat to a hosted model and leaves the scheduled agents "
+                "running free on this machine."
+            )
+
     if "429" in detail or "quota" in lowered or "resource_exhausted" in lowered:
         return (
             "I have used up today's free quota with the language model, so I cannot "
@@ -188,9 +321,16 @@ def explain_model_failure(exc: Exception) -> str:
             "worth immediately."
         )
     if "timeout" in lowered or "deadline" in lowered or "timed out" in lowered:
+        # Reported as slowness, and usually is not. A spent free tier answers
+        # 429 with "retry in 45s", which outlasts any deadline a person waiting
+        # on a chat would accept — so the timeout is the quota in disguise, and
+        # saying only "it was slow" sends the owner to check their wifi.
         return (
-            "The language model did not answer in time. Ask me again, or use "
-            "/run <name> which does not need it."
+            "The language model did not answer in time. On the free tier that "
+            "usually means the day's quota is spent — it asks for a 45-second "
+            "wait, which is longer than I hold on for.\n\n"
+            "`restaurant-ai doctor` says which it is. /run <name>, /brief, "
+            "/pending and /agents need no model at all."
         )
     if "api key" in lowered or "unauthenticated" in lowered or "permission" in lowered:
         return (
@@ -233,9 +373,15 @@ def _offline_answer(question: str, snapshot: dict[str, Any]) -> str:
 class Intent:
     """What the owner wants, as far as the desk can tell.
 
-    ``kind`` is one of ``question``, ``run`` or ``unclear``. Uncertainty is a
-    first-class answer: a desk that guesses between two agents is worse than one
-    that asks, because the owner finds out which it picked only afterwards.
+    ``kind`` is one of ``question``, ``sold``, ``run``, ``greeting`` or
+    ``unclear``. Uncertainty is a first-class answer: a desk that guesses between
+    two agents is worse than one that asks, because the owner finds out which it
+    picked only afterwards.
+
+    ``sold`` is the exception to that caution, and can afford to be: it writes
+    nothing. The owner is shown what was read, in money, and presses a button —
+    so reading a chat message as the day's takings costs a card they ignore,
+    while refusing to costs them typing `/sold` for the rest of the year.
     """
 
     kind: str
@@ -279,6 +425,7 @@ Answer with exactly one line and nothing else — no explanation, no punctuation
 beyond what is shown:
 
 QUESTION
+SOLD
 RUN <agent>
 UNCLEAR
 
@@ -288,6 +435,15 @@ The agents you may name:
 Rules:
 - Asking *about* the restaurant is QUESTION, even when it names an agent.
   "why did Rain order rice?" and "how much stock do we have?" are QUESTION.
+- A list of dishes with numbers is the day's takings: SOLD.
+  "20 nasi lemak, 35 teh tarik" is SOLD. "sold 40 roti kosong today" is SOLD.
+  "we did 90 covers and 30 nasi goreng" is SOLD. So is the same thing in Malay.
+  Nothing is written from this — the owner is shown what it read and presses a
+  button — so read a list of dishes and quantities as SOLD rather than asking.
+- But a number in a *question* is still a QUESTION.
+  "how many nasi lemak did we sell?" is QUESTION. "is 20 teh tarik normal for a
+  Tuesday?" is QUESTION. The difference is whether they are telling you what
+  happened or asking you about it.
 - Telling you to *do* something an agent does is RUN.
   "restock the kitchen" is RUN stock_reorder. "build next week's roster" is
   RUN shift_scheduling.
@@ -296,12 +452,86 @@ Rules:
 - Answer UNCLEAR for anything that is not about running this restaurant."""
 
 
-def route(instruction: str) -> Intent:
+def _first_meaningful_line(text: str) -> str:
+    """The verdict, past whatever the model dressed it in.
+
+    The contract asks for one bare word and models answer it in markdown:
+    ``**QUESTION**``, a fenced block, a leading blank line from a stripped
+    thinking block. Matching on the raw first line failed all three, and a
+    formatting difference is not a reason to refuse the owner an answer.
+    """
+    for line in text.splitlines():
+        cleaned = line.strip().strip("`*_#>-—– \t").strip("\"'")
+        # "Answer: RUN rain" and "Verdict — QUESTION" both happen.
+        for lead in ("answer:", "verdict:", "intent:", "classification:"):
+            if cleaned.lower().startswith(lead):
+                cleaned = cleaned[len(lead) :].strip()
+        if cleaned:
+            return cleaned
+    return ""
+
+
+# Said to a bot by everyone, meaning nothing, and costing two model calls out of
+# a free tier's twenty a day if it goes to the router and then the desk.
+_PLEASANTRIES = {
+    "hi",
+    "hey",
+    "hello",
+    "yo",
+    "helo",
+    "hai",
+    "halo",
+    "thanks",
+    "thank you",
+    "ty",
+    "terima kasih",
+    "tq",
+    "ok",
+    "okay",
+    "oki",
+    "sip",
+    "good",
+    "nice",
+    "cool",
+    "morning",
+    "good morning",
+    "good night",
+    "night",
+    "gn",
+}
+
+
+def is_pleasantry(text: str) -> bool:
+    """Whether this is a greeting rather than a question about the restaurant."""
+    cleaned = (text or "").strip().strip("!.?,").lower()
+    return cleaned in _PLEASANTRIES
+
+
+def greet() -> str:
+    """A reply that costs nothing and still says what can be done.
+
+    Costs nothing literally: no model call, so a greeting does not spend a
+    request. It should still read as a colleague looking up rather than a desk
+    announcing itself — "I am here" was the latter.
+    """
+    return (
+        "Yes? Ask about stock, covers, the roster, tonight's numbers — or tell "
+        "me what needs doing.\n\n"
+        "/agents lists who works here. /help shows everything."
+    )
+
+
+def route(instruction: str, history: list[Any] | None = None) -> Intent:
     """Question, instruction, or neither — decided before anything happens.
 
     A model that is unreachable or rate-limited routes to ``unclear``, not to a
     guess: the deterministic ``/run <agent>`` path is what the owner falls back
     to, and it is named in the reply.
+
+    ``history`` is what makes short replies routable. "do it" is an instruction
+    only if you remember being asked "should we reorder the rice?" a moment ago;
+    read alone it is not routable at all, and the owner gets asked to repeat
+    themselves in the one situation where they were being clearest.
     """
     from restaurant_ai.kernel import llm
     from restaurant_ai.kernel.graph import _message_text
@@ -309,8 +539,10 @@ def route(instruction: str) -> Intent:
     text = (instruction or "").strip()
     if not text:
         return Intent(kind="unclear", reason="Nothing was said.")
+    if is_pleasantry(text):
+        return Intent(kind="greeting")
 
-    if llm.is_fake():
+    if llm.is_fake(interactive=True):
         # Without a model there is no classifier. Naming an agent still works,
         # because that path never needed one.
         named = find_agent(text)
@@ -320,26 +552,56 @@ def route(instruction: str) -> Intent:
 
     from langchain_core.messages import HumanMessage, SystemMessage
 
+    asked: list[Any] = [SystemMessage(content=_ROUTER_PROMPT.format(menu=_agent_menu()))]
+    if history:
+        # As context for the classification, not as more to classify: only the
+        # last line is being decided, and saying so stops the router answering
+        # about a message two turns back.
+        said = "\n".join(f"{t.role}: {t.text}" for t in history if getattr(t, "text", ""))
+        if said:
+            asked.append(
+                HumanMessage(
+                    content=(
+                        f"Recent conversation, for context only:\n{said}\n\n"
+                        "Classify only the next message."
+                    )
+                )
+            )
+    asked.append(HumanMessage(content=text))
+
     try:
         model = llm.get_model("conversational", interactive=True)
-        response = model.invoke(
-            [
-                SystemMessage(content=_ROUTER_PROMPT.format(menu=_agent_menu())),
-                HumanMessage(content=text),
-            ]
-        )
-        verdict = _message_text(response).strip().splitlines()[0].strip()
+        response = model.invoke(asked)
+        verdict = _first_meaningful_line(_message_text(response))
     except Exception as exc:
         log.warning("routing failed", error=str(exc))
         return Intent(kind="unclear", reason=explain_model_failure(exc))
 
-    if verdict.upper().startswith("QUESTION"):
+    upper = verdict.upper()
+    if upper.startswith("QUESTION"):
         return Intent(kind="question")
-    if verdict.upper().startswith("RUN"):
+    if upper.startswith("SOLD"):
+        return Intent(kind="sold")
+    if upper.startswith("RUN"):
         named = find_agent(verdict.split(maxsplit=1)[1] if " " in verdict else "")
         if named:
             return Intent(kind="run", agent=named)
         # It answered RUN and then named something that is not an agent. That is
         # a misroute, and running the wrong agent is worse than asking.
         return Intent(kind="unclear", reason=f"I could not match “{verdict}” to an agent.")
-    return Intent(kind="unclear", reason="I could not tell whether that was a question or a job.")
+    if upper.startswith("UNCLEAR"):
+        # The model's own judgement that it cannot tell. Asking is right.
+        return Intent(
+            kind="unclear", reason="I could not tell whether that was a question or a job."
+        )
+
+    # It said something we do not recognise at all. Answering is the safe guess
+    # and refusing is not: the two mistakes are not symmetric. Treating an
+    # instruction as a question costs a reply explaining whose job it is —
+    # useful in itself. Treating a question as an instruction runs an agent
+    # nobody asked for. So an unreadable verdict answers, and says so in the log
+    # rather than at the owner, who did nothing wrong.
+    log.warning(
+        "router said something unrecognised; answering as a question", verdict=verdict[:120]
+    )
+    return Intent(kind="question")

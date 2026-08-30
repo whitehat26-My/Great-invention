@@ -377,6 +377,15 @@ STAFF_ASSISTANT_AGENT = register(
             "inside their contracted hours and keep their minimum rest, and 48 hours' notice "
             "is required. Explain which rule blocks a swap when one does. A manager approves; "
             "you check and route."
+            "HOW YOU WORK\n"
+            "- `search_sops` — for how we do something here.\n"
+            "- `recipe_detail` — for what is in a dish, how it is made, what it contains.\n"
+            "- `request_shift_swap` — when someone wants their shift covered.\n"
+            "\n"
+            "Look it up rather than remembering it. On anything a guest could eat, the recipe\n"
+            "is the only acceptable source: an allergen answered from memory is how someone\n"
+            'gets hurt. If the answer is not there, say so — "I do not know, ask the manager"\n'
+            "is safe and a confident guess is not.\n"
         ),
         model_tier="conversational",
         tools=[
@@ -399,6 +408,11 @@ STAFF_ASSISTANT_AGENT = register(
                 args_schema=SwapArgs,
             ),
         ],
+        # Three tools, and the loop spends a turn calling each and a turn
+        # reading what came back. Six leaves no room to recover from one
+        # bad call, and running out of turns mid-sequence is how the last
+        # step — the one that proposes payment — silently never happens.
+        max_iterations=9,
         perceive=perceive,
         autonomous=autonomous,
     )

@@ -1,6 +1,6 @@
 """Every agent, exercised on the shared kernel.
 
-The contract each of the 13 must satisfy: it runs to completion against the real
+The contract each of them must satisfy: it runs to completion against the real
 database, records an auditable run, and either finishes or parks at an approval
 gate with something a human can actually act on.
 """
@@ -387,3 +387,74 @@ class TestCurrencyReadsRight:
         settings = get_settings()
         assert settings.currency and settings.currency_symbol
         assert settings.currency != settings.currency_symbol
+
+
+class TestNobodyWritesTheCountDown:
+    """A count kept in prose stops being true without anything breaking.
+
+    Two agents were retired and the number 13 survived in nineteen places —
+    docstrings, the CLI's help, the API description a client reads — while the
+    dashboard and the map, which count what is actually registered, said 11.
+    Nothing failed. The docs were just quietly wrong for months.
+    """
+
+    def test_the_api_description_counts_rather_than_claims(self):
+        from restaurant_ai.api.main import app
+
+        assert app.description is not None
+        assert f"{len(all_agents())} agents" in app.description
+
+    def test_no_source_file_hardcodes_an_agent_count(self):
+        """Whatever the number is, writing it down is the mistake."""
+        import re
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2] / "src" / "restaurant_ai"
+        # "13 agents", "all 11 agents", "the thirteen agents" — a literal count
+        # attached to the word. Hours, prices and ids are not counts of agents.
+        # A number only claims something when it is attached to the noun. "the
+        # 60% target" and "a thirteen-hour day" are not agent counts.
+        written = re.compile(r"\b(\d+|eleven|twelve|thirteen|fourteen)\s+agents?\b", re.IGNORECASE)
+        offenders = []
+        for path in root.rglob("*.py"):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if "{len(" in line or 'f"' in line and "len(" in line:
+                    continue  # computed, which is the point
+                if written.search(line):
+                    offenders.append(f"{path.relative_to(root)}:{number}: {line.strip()}")
+        assert not offenders, "agent counts written into prose:\n" + "\n".join(offenders)
+
+
+class TestEveryAgentKnowsHowToUseItsOwnTools:
+    """The prompts described the job and never named the tools that do it.
+
+    All eleven were like this, and it showed the moment a smaller model ran one:
+    Hermes called recalculate_policies, read the result, and wrote "I can now
+    draft purchase orders" — because nothing told it the sequence ends with
+    draft_purchase_orders. The job was described perfectly and the means were
+    left to be guessed.
+    """
+
+    @pytest.mark.parametrize("name", AGENT_NAMES)
+    def test_the_prompt_names_every_tool_the_agent_has(self, name):
+        spec = get_agent(name)
+        missing = [t.name for t in spec.tools if t.name not in spec.system_prompt]
+        assert not missing, (
+            f"{name} has tools its prompt never mentions: {missing}. "
+            "A model cannot reliably call what it was not told it has."
+        )
+
+    @pytest.mark.parametrize("name", AGENT_NAMES)
+    def test_the_prompt_says_how_the_work_is_sequenced(self, name):
+        """Naming the tools is half of it; the order and the finishing is the rest."""
+        assert "HOW YOU WORK" in get_agent(name).system_prompt
+
+    @pytest.mark.parametrize("name", AGENT_NAMES)
+    def test_there_are_enough_turns_for_every_tool(self, name):
+        """The loop spends a turn calling each tool and a turn reading the result,
+        so a run that cannot afford both for every tool can stop mid-sequence —
+        and the step that never happens is always the last one."""
+        spec = get_agent(name)
+        assert spec.max_iterations >= 2 * len(spec.tools) + 1, (
+            f"{name} has {len(spec.tools)} tools and only {spec.max_iterations} turns"
+        )

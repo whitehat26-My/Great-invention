@@ -79,8 +79,11 @@ class TestRecording:
         reading = takings.read(menu, "20 nasi lemak biasa, 35 teh tarik, 90 covers")
         assert reading.usable
         assert reading.covers == 90
-        # 20 × 6.00 + 35 × 2.50
-        assert reading.total == Decimal("207.50")
+        # 20 × 4.00 + 35 × 2.50, at the prices on the printed menu. This read
+        # 207.50 while Nasi Lemak Biasa was in the spreadsheet at RM 6.00 — the
+        # test was encoding the error rather than catching it, because it was
+        # written from the same bad transcription as the price.
+        assert reading.total == Decimal("167.50")
 
         written = takings.record(menu, reading)
         assert written["lines"] == 2

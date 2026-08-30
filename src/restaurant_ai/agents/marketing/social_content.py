@@ -362,6 +362,14 @@ SOCIAL_CONTENT_AGENT = register(
             "help. Name the dish, say what is in it, give the price.\n\n"
             "For win-back offers, be direct about why you are writing and make the offer worth "
             "opening. Only ever contact guests who opted in."
+            "HOW YOU WORK\n"
+            "- `schedule_content` — draft the posts for what needs promoting.\n"
+            "- `build_reengagement` — draft a win-back for guests who have stopped coming.\n"
+            "\n"
+            "Use whichever the day calls for; use both when both apply. Everything you draft\n"
+            "waits for the owner's approval before it reaches a single guest, so write the\n"
+            "finished thing rather than a description of it — nobody approves a plan to write\n"
+            "a post.\n"
         ),
         model_tier="conversational",
         tools=[

@@ -125,6 +125,16 @@ class TestTheSystemMap:
                 "status",
                 "last_summary",
                 "tools",
+                # What it has actually been doing, as against how it is declared.
+                "last_run_at",
+                "next_run",
+                "next_run_seconds",
+                "recent",
+                "runs_7d",
+                "failed_7d",
+                "tokens_7d",
+                "typical_seconds",
+                "pending_approvals",
             }
             # "How the agent works" must never be blank on the panel.
             assert agent["brief"].strip()
@@ -148,3 +158,72 @@ class TestTheSystemMap:
     def test_the_dashboard_links_to_the_map(self, client):
         page = client.get(f"/dashboard?key={KEY}")
         assert "/dashboard/map" in page.text
+
+
+class TestTheMapSaysWhetherItIsWorking:
+    """The map described the system as declared — tools, schedule, the brief it
+    is given — and every one of those is equally true on a machine where nothing
+    has run for a week. It could not answer the question people open it to ask.
+    """
+
+    def _agents(self, client):
+        body = client.get(f"/dashboard/map/data?key={KEY}").json()
+        return {a["name"]: a for dept in body["departments"] for a in dept["agents"]}
+
+    def test_every_agent_carries_its_recent_history(self, client):
+        for name, agent in self._agents(client).items():
+            for field in (
+                "last_run_at",
+                "next_run",
+                "recent",
+                "runs_7d",
+                "failed_7d",
+                "typical_seconds",
+                "pending_approvals",
+            ):
+                assert field in agent, f"{name} is missing {field}"
+
+    def test_a_scheduled_agent_says_when_it_fires_next(self, client):
+        """ "Hourly review sweep" is the rule. "in 14 minutes" is what tells you
+        whether the quiet you are looking at is expected."""
+        said = self._agents(client)["reputation"]["next_run"]
+        assert said is not None
+        assert any(word in said for word in ("now", "seconds", "minutes", "hours", "days"))
+
+    def test_an_agent_with_no_schedule_says_nothing_rather_than_guessing(self, client):
+        for agent in self._agents(client).values():
+            if "not on a clock" in agent["schedule"]:
+                assert agent["next_run"] is None
+                assert agent["next_run_seconds"] is None
+
+    def test_the_next_firing_can_be_ordered(self, client):
+        """The header reports the soonest, and the words cannot be sorted:
+        "in 3 days" comes before "in 4 hours" on any property of the strings."""
+        for agent in self._agents(client).values():
+            seconds = agent["next_run_seconds"]
+            if seconds is None:
+                continue
+            assert isinstance(seconds, int) and seconds >= 0
+            # The words and the number have to describe the same moment.
+            said = agent["next_run"] or ""
+            if "hours" in said:
+                assert 5400 <= seconds < 172800
+            elif "days" in said:
+                assert seconds >= 172800
+
+    def test_history_is_newest_first(self, db, client):
+        """The panel reverses it to read left to right; the API owes it an order."""
+        for agent in self._agents(client).values():
+            stamps = [r["at"] for r in agent["recent"] if r["at"]]
+            assert stamps == sorted(stamps, reverse=True)
+
+    def test_at_most_ten_runs_are_carried(self, client):
+        """A strip of marks is what this is for, not a log."""
+        for agent in self._agents(client).values():
+            assert len(agent["recent"]) <= 10
+
+    def test_counts_are_never_null(self, client):
+        """The page does arithmetic on these; null would render as NaN."""
+        for agent in self._agents(client).values():
+            for field in ("runs_7d", "failed_7d", "tokens_7d", "pending_approvals"):
+                assert isinstance(agent[field], int)

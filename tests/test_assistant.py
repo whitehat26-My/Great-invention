@@ -10,7 +10,8 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
-from restaurant_ai.assistant import answer, build_snapshot
+from restaurant_ai.assistant import answer, build_snapshot, explain_model_failure
+from restaurant_ai.config import reset_settings_cache
 
 pytestmark = pytest.mark.db
 
@@ -85,7 +86,7 @@ class TestItCannotAct:
 
                 return Response()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
 
         reply = answer("Order 50kg of prawns right now.", session=db)
@@ -105,14 +106,16 @@ class TestItCannotAct:
 
                 return Response()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
         answer("anything", session=db)
 
-        system = captured["system"]
+        # The claim, not its wording: this must survive a rewrite of the prompt's
+        # voice, which is the thing most likely to change about it.
+        system = captured["system"].lower()
         assert "cannot change anything" in system
         assert "no tools" in system
-        assert "Never imply that" in system
+        assert "never imply" in system
 
     def test_it_is_told_the_currency_and_timezone(self, db, monkeypatch):
         """The order agent once quoted a ringgit dish in dollars. Not again."""
@@ -127,7 +130,7 @@ class TestItCannotAct:
 
                 return Response()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
         answer("what is the average check?", session=db)
 
@@ -153,7 +156,7 @@ class TestAnswering:
 
                 return Response()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
 
         reply = answer("tell me everything", session=db)
@@ -173,7 +176,7 @@ class TestAnswering:
 
                 return Response()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
 
         reply = answer("what is low?", session=db)
@@ -201,7 +204,7 @@ class TestRoutingAnInstruction:
 
                 return Response()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
 
     def test_a_question_routes_to_answering(self, db, monkeypatch):
@@ -234,11 +237,18 @@ class TestRoutingAnInstruction:
         assert intent.kind == "unclear"
         assert "gordon_ramsay" in intent.reason
 
-    def test_an_unparseable_verdict_is_unclear_not_a_guess(self, db, monkeypatch):
+    def test_an_unparseable_verdict_answers_rather_than_refusing(self, db, monkeypatch):
+        """Changed deliberately: this used to refuse, and refusing was wrong.
+
+        The two mistakes are not symmetric. Answering an instruction costs a
+        reply naming whose job it is, which is useful. Running an agent nobody
+        asked for is not recoverable by reading. So the safe guess is the one
+        that only ever reads.
+        """
         self._model(monkeypatch, "I think maybe you want to reorder something?")
         from restaurant_ai.assistant import route
 
-        assert route("hmm").kind == "unclear"
+        assert route("hmm").kind == "question"
 
     def test_a_model_that_fails_routes_to_unclear(self, db, monkeypatch):
         """Rate-limited or unreachable must not become a coin-flip."""
@@ -247,7 +257,7 @@ class TestRoutingAnInstruction:
             def invoke(self, messages):
                 raise RuntimeError("429 quota exceeded")
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Broken())
         from restaurant_ai.assistant import route
 
@@ -274,7 +284,7 @@ class TestRoutingAnInstruction:
 
                 return Response()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
         from restaurant_ai.assistant import route
         from restaurant_ai.kernel.registry import all_agents
@@ -332,7 +342,7 @@ class TestWhenTheModelWillNotAnswer:
             asked["interactive"] = interactive
             return Recorder()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", spy)
 
         answer("how are we?", session=db)
@@ -352,7 +362,7 @@ class TestWhenTheModelWillNotAnswer:
             asked["interactive"] = interactive
             return Recorder()
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", spy)
 
         from restaurant_ai.assistant import route
@@ -370,7 +380,7 @@ class TestWhenTheModelWillNotAnswer:
                     "Quota exceeded for generate_content_free_tier_requests, limit: 20"
                 )
 
-        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Exhausted())
 
         reply = answer("how much stock?", session=db)
@@ -428,3 +438,378 @@ class TestNamesPeopleActuallyType:
 
         assert find_agent("<gordon>") is None
         assert find_agent("<>") is None
+
+
+class TestTheVerdictAsModelsActuallyWriteIt:
+    """The contract asks for one bare word. Models answer it in markdown."""
+
+    def _model(self, monkeypatch, verdict: str):
+        class Recorder:
+            def invoke(self, messages):
+                class Response:
+                    content = verdict
+
+                return Response()
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Recorder())
+
+    @pytest.mark.parametrize(
+        "dressed",
+        [
+            "**QUESTION**",
+            "`QUESTION`",
+            "QUESTION.",
+            "\n\nQUESTION",
+            "Answer: QUESTION",
+            "> QUESTION",
+            '"QUESTION"',
+        ],
+    )
+    def test_a_question_is_recognised_however_it_is_dressed(self, db, monkeypatch, dressed):
+        from restaurant_ai.assistant import route
+
+        self._model(monkeypatch, dressed)
+        assert route("how much stock?").kind == "question"
+
+    @pytest.mark.parametrize("dressed", ["**RUN stock_reorder**", "Answer: RUN rain", "`RUN Rain`"])
+    def test_an_instruction_is_too(self, db, monkeypatch, dressed):
+        from restaurant_ai.assistant import route
+
+        self._model(monkeypatch, dressed)
+        intent = route("restock")
+        assert intent.kind == "run"
+        assert intent.agent == "stock_reorder"
+
+    def test_an_unreadable_verdict_answers_rather_than_refusing(self, db, monkeypatch):
+        """The two mistakes are not symmetric.
+
+        Treating an instruction as a question costs a reply explaining whose
+        job it is. Treating a question as an instruction runs an agent nobody
+        asked for. So an unreadable verdict answers.
+        """
+        from restaurant_ai.assistant import route
+
+        self._model(monkeypatch, "I think the owner is asking about stock levels")
+        assert route("how are we doing?").kind == "question"
+
+    def test_the_models_own_unclear_still_asks(self, db, monkeypatch):
+        """Its judgement that it cannot tell is worth respecting."""
+        from restaurant_ai.assistant import route
+
+        self._model(monkeypatch, "UNCLEAR")
+        intent = route("do the thing")
+        assert intent.kind == "unclear"
+        assert "question or a job" in intent.reason
+
+    def test_run_naming_a_stranger_is_still_refused(self, db, monkeypatch):
+        """Forgiving formatting must not become forgiving about which agent."""
+        from restaurant_ai.assistant import route
+
+        self._model(monkeypatch, "**RUN gordon_ramsay**")
+        assert route("shout").kind == "unclear"
+
+
+class TestGreetingsCostNothing:
+    """Twenty model calls a day, and "hey" would spend two of them."""
+
+    def test_a_greeting_never_reaches_the_model(self, db, monkeypatch):
+        from restaurant_ai.assistant import route
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
+        monkeypatch.setattr(
+            "restaurant_ai.kernel.llm.get_model",
+            lambda tier, **kw: pytest.fail("a greeting must not cost a model call"),
+        )
+        assert route("hey").kind == "greeting"
+
+    @pytest.mark.parametrize(
+        "said", ["hi", "Hello!", "  hey  ", "thanks", "terima kasih", "ok", "good morning"]
+    )
+    def test_the_ones_people_actually_send(self, db, said):
+        from restaurant_ai.assistant import is_pleasantry
+
+        assert is_pleasantry(said)
+
+    @pytest.mark.parametrize(
+        "said",
+        ["how much stock?", "hey what are the numbers", "restock the kitchen", "okay run rain"],
+    )
+    def test_a_real_message_is_not_mistaken_for_one(self, db, said):
+        """ "okay run rain" is an instruction that begins with a pleasantry."""
+        from restaurant_ai.assistant import is_pleasantry
+
+        assert not is_pleasantry(said)
+
+    def test_the_greeting_says_what_can_be_done(self, db):
+        from restaurant_ai.assistant import greet
+
+        said = greet()
+        assert "/agents" in said and "/help" in said
+
+
+class TestATimeoutOnAFreeTierIsUsuallyTheQuota:
+    def test_it_names_the_likely_cause_rather_than_blaming_the_network(self):
+        from restaurant_ai.assistant import explain_model_failure
+
+        said = explain_model_failure(TimeoutError("deadline exceeded"))
+        assert "quota is spent" in said
+        assert "doctor" in said
+        # And what still works without any model at all.
+        assert "/run" in said
+
+
+class TestLocalModelFailures:
+    """A machine under the counter fails differently from a hosted API.
+
+    It shares vocabulary with the hosted failures without sharing their causes:
+    "timed out" from a CPU grinding through an 8B model is not a spent quota,
+    and telling the owner to wait until tomorrow for a quota they do not have
+    sends them to fix the wrong thing.
+    """
+
+    @pytest.fixture
+    def local(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "ollama")
+        reset_settings_cache()
+        yield
+        reset_settings_cache()
+
+    def test_ollama_not_running_says_so_and_says_why_the_window_matters(self, local):
+        said = explain_model_failure(RuntimeError("connection refused to localhost:11434"))
+        assert "not installed or not running" in said
+        assert "opened before Ollama was installed" in said
+
+    def test_a_model_that_was_never_pulled_gets_the_pull_command(self, local):
+        said = explain_model_failure(RuntimeError('model "hermes3:8b" not found, try pulling it'))
+        assert "ollama pull" in said
+
+    def test_not_enough_memory_offers_a_smaller_model(self, local):
+        said = explain_model_failure(RuntimeError("model requires more system memory"))
+        assert "hermes3:3b" in said
+
+    def test_a_slow_local_answer_is_not_reported_as_a_spent_quota(self, local):
+        """The bug this exists for: there is no quota on this machine to spend."""
+        said = explain_model_failure(TimeoutError("Request timed out"))
+        assert "quota" not in said.lower()
+        assert "normal rather than broken" in said
+        assert "LLM_PROVIDER_INTERACTIVE" in said
+
+    def test_hosted_quota_advice_is_untouched(self):
+        """Every other deployment still gets the hosted explanation."""
+        reset_settings_cache()
+        said = explain_model_failure(RuntimeError("429 RESOURCE_EXHAUSTED"))
+        assert "today's free quota" in said
+
+
+class TestAMissingPackageIsNotAProviderFailure:
+    """`git pull` brings code that needs a package; nothing installs it.
+
+    It surfaces from the same call as a real provider error, so every other
+    explanation here would have sent the owner to check a key, a network or a
+    quota — none of which is involved. Adding any provider adds a dependency,
+    so this outlives the one that revealed it.
+    """
+
+    def test_it_names_the_package_and_the_command(self):
+        said = explain_model_failure(ModuleNotFoundError("No module named 'langchain_ollama'"))
+        assert "pip install -e ." in said
+        assert "not installed" in said
+
+    def test_it_does_not_blame_the_network_or_the_key(self):
+        said = explain_model_failure(ModuleNotFoundError("No module named 'langchain_ollama'"))
+        assert "could not reach" not in said.lower()
+        assert "quota" not in said.lower()
+
+    def test_it_wins_over_the_local_model_explanations(self, monkeypatch):
+        """A missing package under LLM_PROVIDER=ollama is still a missing package."""
+        monkeypatch.setenv("LLM_PROVIDER", "ollama")
+        reset_settings_cache()
+        said = explain_model_failure(ModuleNotFoundError("No module named 'langchain_ollama'"))
+        assert "pip install -e ." in said
+        assert "not installed or not running" not in said
+        reset_settings_cache()
+
+
+class TestItFollowsAConversation:
+    """The gap that made it a search box rather than a colleague.
+
+    "how much chicken is left?" always worked. "and rice?" was unanswerable,
+    because every message arrived with no idea that the first one had happened.
+    """
+
+    def _turns(self):
+        from restaurant_ai.memory import KEANU, OWNER, Turn
+
+        return [
+            Turn(role=OWNER, text="how much chicken is left?"),
+            Turn(role=KEANU, text="About 12kg — enough for tomorrow."),
+        ]
+
+    def test_the_exchange_reaches_the_model(self, db, monkeypatch):
+        seen = {}
+
+        class Model:
+            def invoke(self, messages):
+                seen["messages"] = messages
+
+                class R:
+                    content = "About 40kg of rice."
+
+                return R()
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Model())
+
+        answer("and rice?", session=db, history=self._turns())
+
+        texts = [str(getattr(m, "content", "")) for m in seen["messages"]]
+        assert any("how much chicken is left?" in t for t in texts), "the question is missing"
+        assert any("About 12kg" in t for t in texts), "Keanu's own answer is missing"
+        assert texts[-1] == "and rice?"
+
+    def test_keanu_speaks_as_himself_not_as_the_owner(self, db, monkeypatch):
+        """His turns must arrive as his, or the model reads its own words as
+        instructions from the owner and answers them again."""
+        from langchain_core.messages import AIMessage
+
+        seen = {}
+
+        class Model:
+            def invoke(self, messages):
+                seen["messages"] = messages
+
+                class R:
+                    content = "ok"
+
+                return R()
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Model())
+
+        answer("and rice?", session=db, history=self._turns())
+
+        spoken = [m for m in seen["messages"] if isinstance(m, AIMessage)]
+        assert [str(m.content) for m in spoken] == ["About 12kg — enough for tomorrow."]
+
+    def test_no_history_still_answers(self, db, monkeypatch):
+        """A first message has no thread, and must not be worse for it."""
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
+
+        class Model:
+            def invoke(self, messages):
+                class R:
+                    content = "About 40kg."
+
+                return R()
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Model())
+
+        assert answer("how much rice?", session=db) == "About 40kg."
+
+
+class TestTellingApartFromAsking:
+    """A list of dishes with numbers is the day's takings. A number inside a
+    question is still a question, and reading "how many nasi lemak did we sell?"
+    as a sales report would offer to record the answer back at them."""
+
+    def _verdict(self, monkeypatch, said: str):
+        from restaurant_ai.assistant import route
+
+        class Model:
+            def invoke(self, messages):
+                class R:
+                    content = said
+
+                return R()
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Model())
+        return route("whatever the owner typed")
+
+    def test_a_sold_verdict_is_understood(self, monkeypatch):
+        assert self._verdict(monkeypatch, "SOLD").kind == "sold"
+
+    def test_it_survives_the_dressing_models_add(self, monkeypatch):
+        """Same reason QUESTION had to: models answer a one-word contract in
+        markdown, and a formatting difference is not a reason to lose a day's
+        takings."""
+        assert self._verdict(monkeypatch, "**SOLD**").kind == "sold"
+        assert self._verdict(monkeypatch, "Answer: SOLD").kind == "sold"
+
+    def test_a_question_is_still_a_question(self, monkeypatch):
+        assert self._verdict(monkeypatch, "QUESTION").kind == "question"
+
+    def test_the_prompt_draws_the_line_it_needs_to(self):
+        """The distinction is whether the owner is telling you what happened or
+        asking you about it, and the prompt has to say so with examples — the
+        rule alone is not something a smaller model can apply."""
+        from restaurant_ai.assistant import _ROUTER_PROMPT
+
+        # Whitespace-normalised: the prompt is wrapped for reading, and a line
+        # break falling in a different place is not a change in what it says.
+        prompt = " ".join(_ROUTER_PROMPT.split())
+        assert "SOLD" in prompt
+        assert "how many nasi lemak did we sell?" in prompt
+        assert "telling you what happened or asking you about it" in prompt
+
+    def test_an_unreadable_verdict_still_answers_rather_than_records(self, monkeypatch):
+        """The old asymmetry, unchanged: a guess that only reads is safe, and
+        the guess that offers to write the books is the one to avoid."""
+        assert self._verdict(monkeypatch, "I think they want...").kind == "question"
+
+
+class TestTwoSourcesAndWhichOneWins:
+    """The owner was standing in the room; the database was not.
+
+    A till that dropped a ticket, a card machine that timed out, a night nobody
+    got round to recording — the system's number is wrong in all three and the
+    owner's is right. Preferring the record over the person who was there is how
+    a system teaches its owner to stop telling it things.
+    """
+
+    def _prompt(self, db) -> str:
+        from restaurant_ai.assistant import _system_prompt, build_snapshot
+
+        return " ".join(_system_prompt(build_snapshot(db)).split())
+
+    def test_the_owner_outranks_the_database(self, db):
+        said = self._prompt(db)
+        assert "The owner's figure wins" in said
+        assert "standing in the room" in said
+
+    def test_an_override_has_to_be_declared(self, db):
+        """Silently replacing the books with a remark is worse than either
+        number on its own, because nobody can tell afterwards which it was."""
+        said = self._prompt(db)
+        assert "say that you are, and what the record says instead" in said
+        assert "Never silently replace the books" in said
+
+    def test_the_database_answers_when_nothing_was_said(self, db):
+        assert "If they have said nothing about it, the database is the answer" in self._prompt(db)
+
+    def test_both_sources_are_named(self, db):
+        said = self._prompt(db)
+        assert "What the owner tells you" in said
+        assert "POS sales and stock levels" in said
+
+
+class TestHowHeSounds:
+    def test_he_is_told_to_acknowledge_briefly(self, db):
+        from restaurant_ai.assistant import _system_prompt, build_snapshot
+
+        said = " ".join(_system_prompt(build_snapshot(db)).split())
+        assert "Acknowledge briefly and move on" in said
+        assert "Never a paragraph confirming what they just told you" in said
+
+    def test_he_leads_with_the_number_then_what_it_means(self, db):
+        from restaurant_ai.assistant import _system_prompt, build_snapshot
+
+        said = " ".join(_system_prompt(build_snapshot(db)).split())
+        assert "Lead with the number, then what it means" in said
+
+    def test_the_greeting_is_a_colleague_not_a_desk(self):
+        from restaurant_ai.assistant import greet
+
+        assert "I am here" not in greet()
+        assert greet().startswith("Yes?")

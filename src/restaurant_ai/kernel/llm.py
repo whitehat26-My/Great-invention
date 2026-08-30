@@ -43,17 +43,36 @@ class FakeModelInUse(RuntimeError):
     """Raised when live-model behaviour is required but the fake is configured."""
 
 
-def is_fake() -> bool:
-    return get_settings().llm_provider == "fake"
+def is_fake(interactive: bool = False) -> bool:
+    return provider_for(interactive) == "fake"
 
 
-def model_name(tier: str = "conversational") -> str:
-    """The model id for a tier under the configured provider."""
+def provider_for(interactive: bool = False) -> str:
+    """Who answers this call.
+
+    One provider unless the deployment splits them. The split is by *who is
+    waiting*, not by tier: a scheduled run can take three minutes on a machine
+    under the counter and cost nothing, while the same three minutes on the
+    owner's question is a bot that looks dead.
+    """
+    settings = get_settings()
+    if interactive and settings.llm_provider_interactive:
+        return str(settings.llm_provider_interactive)
+    return str(settings.llm_provider)
+
+
+def model_name(tier: str = "conversational", *, interactive: bool = False) -> str:
+    """The model id for a tier under whichever provider answers this call."""
     settings = get_settings()
     reasoning = tier == "reasoning"
-    if settings.llm_provider == "google":
+    provider = provider_for(interactive)
+    if provider == "google":
         return (
             settings.google_model_reasoning if reasoning else settings.google_model_conversational
+        )
+    if provider == "ollama":
+        return (
+            settings.ollama_model_reasoning if reasoning else settings.ollama_model_conversational
         )
     return settings.model_reasoning if reasoning else settings.model_conversational
 
@@ -73,14 +92,14 @@ def get_model(tier: str = "conversational", *, interactive: bool = False) -> Bas
     callers get one retry and a deadline, and a failure they can report.
     """
     settings = get_settings()
-    provider = settings.llm_provider
+    provider = provider_for(interactive)
     if provider == "fake":
         raise FakeModelInUse(
             "LLM_PROVIDER=fake: no chat model is available. Agents fall back to "
             "their deterministic path; set LLM_PROVIDER=anthropic to use a model."
         )
 
-    name = model_name(tier)
+    name = model_name(tier, interactive=interactive)
     # Keyed by provider too. Model ids are not unique across providers in
     # principle, and a cache that assumes they are hands back the wrong client
     # the first time they collide.
@@ -88,7 +107,11 @@ def get_model(tier: str = "conversational", *, interactive: bool = False) -> Bas
     if key in _cache:
         return _cache[key]
 
-    builder = {"anthropic": _build_anthropic, "google": _build_google}[provider]
+    builder = {
+        "anthropic": _build_anthropic,
+        "google": _build_google,
+        "ollama": _build_ollama,
+    }[provider]
     model = builder(settings, name, interactive)
     log.info("model initialised", tier=tier, provider=provider, model=name)
     _cache[key] = model
@@ -171,6 +194,48 @@ def _build_google(settings: Any, name: str, interactive: bool = False) -> BaseCh
     return ChatGoogleGenerativeAI(**kwargs)
 
 
+def _build_ollama(settings: Any, name: str, interactive: bool = False) -> BaseChatModel:
+    """A model running on this machine. No key, no quota, no bill.
+
+    What it costs instead is hardware and patience. An 8B model quantised wants
+    about 5GB of RAM and answers in minutes on a CPU where a hosted model takes
+    seconds — which is why this belongs on the scheduled side of the split and
+    the owner's chat usually does not.
+
+    The agents bind real tools, so the model has to be one that can call them.
+    Hermes is trained for it and is among the better open models at it; a base
+    chat model that cannot emit a tool call will run the loop to its iteration
+    limit doing nothing, and report that it ran out of turns.
+
+    ``num_ctx`` is the one setting that silently ruins results. Ollama defaults
+    to a small context — smaller than one agent's system prompt plus its tool
+    schemas plus a day of situation — and it does not error when the prompt is
+    too long, it *discards the front of it*. The agent then reasons without its
+    instructions and reports confidently on nothing.
+    """
+    from langchain_ollama import ChatOllama
+
+    kwargs: dict[str, Any] = {
+        "model": name,
+        "base_url": settings.ollama_host,
+        "num_ctx": settings.ollama_context,
+        "num_predict": settings.llm_max_tokens,
+        # Otherwise nearly every scheduled run pays to load 5GB from disk again,
+        # because they are an hour apart and Ollama forgets in minutes.
+        "keep_alive": settings.ollama_keep_alive,
+        # Retries here are a client-side loop against a server on this machine.
+        # A rate limit is impossible; the failures are "not running" and "model
+        # not pulled", and retrying those ten times only delays the message
+        # that says which.
+        "max_retries": 1,
+    }
+    if interactive:
+        kwargs["timeout"] = settings.llm_interactive_timeout
+    if settings.llm_temperature is not None:
+        kwargs["temperature"] = settings.llm_temperature
+    return ChatOllama(**kwargs)
+
+
 def available_models() -> list[str]:
     """What the configured key can actually see.
 
@@ -184,7 +249,69 @@ def available_models() -> list[str]:
         return _google_models()
     if provider == "anthropic":
         return _anthropic_models()
+    if provider == "ollama":
+        return _ollama_models()
     raise FakeModelInUse("LLM_PROVIDER=fake: there are no models to list.")
+
+
+def ollama_placement() -> str | None:
+    """Whether the loaded model is on the graphics card or the processor.
+
+    It is the single biggest fact about how a local model performs, and nothing
+    anywhere says it. The same machine answers in seconds with a GPU and in
+    minutes without one, so an owner comparing "is this fast enough" is really
+    asking a question about placement that they have no way to see.
+
+    It also decides what the model costs in system memory. A model resident in
+    VRAM is not competing with Postgres and four Python processes for the 16GB
+    the machine has; a model on the CPU is.
+
+    None when nothing is loaded, which is not a fault — Ollama unloads on a
+    timer, and a machine that has been quiet has nothing to report.
+    """
+    import httpx
+
+    host = get_settings().ollama_host.rstrip("/")
+    try:
+        response = httpx.get(f"{host}/api/ps", timeout=5)
+        response.raise_for_status()
+        loaded = response.json().get("models") or []
+    except Exception:
+        return None
+    if not loaded:
+        return None
+
+    model = loaded[0]
+    total = int(model.get("size") or 0)
+    on_gpu = int(model.get("size_vram") or 0)
+    if not total:
+        return None
+    if on_gpu >= total:
+        return "on the graphics card"
+    if on_gpu:
+        # A model that does not fit is split, and the slow part sets the pace.
+        return f"split — {on_gpu * 100 // total}% on the graphics card, the rest on the processor"
+    return "on the processor (no graphics card in use — expect minutes, not seconds)"
+
+
+def _ollama_models() -> list[str]:
+    """What is actually pulled onto this machine.
+
+    A model named in .env but never pulled is the likeliest local failure, and
+    it is indistinguishable from a typo until something lists what is there.
+    """
+    import httpx
+
+    host = get_settings().ollama_host.rstrip("/")
+    try:
+        response = httpx.get(f"{host}/api/tags", timeout=10)
+        response.raise_for_status()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not reach Ollama at {host} ({exc}). Start it with `ollama serve`, "
+            "or install it from https://ollama.com."
+        ) from exc
+    return sorted(m["name"] for m in response.json().get("models", []))
 
 
 def _google_models() -> list[str]:
@@ -225,7 +352,19 @@ def describe_provider() -> dict[str, Any]:
     if settings.llm_provider == "google":
         described["thinking"] = settings.google_reasoning_effort or "model default"
         described["has_key"] = bool(settings.google_api_key)
+    elif settings.llm_provider == "ollama":
+        # There is no key to have, and saying "no key" would read as a fault.
+        described["thinking"] = "model default"
+        described["has_key"] = True
+        described["host"] = settings.ollama_host
     else:
         described["thinking"] = settings.llm_thinking
         described["has_key"] = bool(settings.anthropic_api_key)
+
+    # Only when the deployment actually splits them. Reporting one provider
+    # twice on every other machine is noise.
+    interactive = provider_for(interactive=True)
+    if interactive != settings.llm_provider:
+        described["interactive_provider"] = interactive
+        described["interactive"] = model_name("conversational", interactive=True)
     return described

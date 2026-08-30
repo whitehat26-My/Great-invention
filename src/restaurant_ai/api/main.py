@@ -15,6 +15,7 @@ from restaurant_ai.api.routes import (
 )
 from restaurant_ai.api.webhooks import router as webhooks_router
 from restaurant_ai.config import get_settings
+from restaurant_ai.kernel.registry import all_agents
 from restaurant_ai.logging_setup import configure_logging, get_logger
 
 log = get_logger(__name__)
@@ -37,9 +38,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Autonomous Restaurant Operations",
     version=__version__,
+    # Counted, not written down. This claimed two more than existed for months
+    # after two were retired, which is the failure mode of every number kept in
+    # prose: nothing breaks, and the docs quietly stop being true.
     description=(
-        "Event ingestion and control plane for an AI-operated restaurant: 13 agents "
-        "across front of house, kitchen, supply chain, marketing, workforce and finance."
+        f"Event ingestion and control plane for an AI-operated restaurant: "
+        f"{len(all_agents())} agents across front of house, kitchen, supply chain, "
+        f"marketing, workforce and finance."
     ),
     lifespan=lifespan,
 )

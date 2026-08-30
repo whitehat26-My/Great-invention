@@ -1,12 +1,17 @@
 """The shared agent graph.
 
-                    +<-------- (more to do) --------+
-                    |                               |
-    START -> perceive -> reason -> act -+- (nothing gated) --> record -> END
-                                        |
-                                        +- await_approval -> commit -> record -> END
+                         +<---- (more to do) ----+
+                         |                       |
+    START -> perceive -+-> reason -> act -+- (nothing gated) -+-> record -> END
+                       |                  |                   |
+                       |                  +- await_approval ->+
+                       |                        -> commit ----+
+                       |                                      |
+                       +---------- (nothing to do) -----------+
 
 perceive   loads the agent's read-only view of the world. No LLM, no writes.
+           An agent that says so can end the run here: nothing to do costs no
+           model call, which matters for one scheduled every five minutes.
 reason     decides what to do: the LLM bound to this agent's tools, or the
            agent's deterministic autonomous path when the fake model is active.
 act        runs the chosen tools. A gated tool returns a Proposal rather than
@@ -60,7 +65,7 @@ log = get_logger(__name__)
 
 
 def build_graph(spec: AgentSpec):
-    """Compile the graph for one agent. Identical shape for all 13."""
+    """Compile the graph for one agent. Identical shape for every one of them."""
 
     def perceive(state: AgentState) -> dict[str, Any]:
         if spec.perceive is None:
@@ -75,7 +80,23 @@ def build_graph(spec: AgentSpec):
                     state=dict(state.get("trigger_payload") or {}),
                 )
             )
-        return {"context": context or {}}
+        context = context or {}
+
+        # Nothing to do is a legitimate outcome, and the cheapest one. Deciding
+        # it here — from what perceive already read — means no model call, no
+        # tool call and no tokens for a run that was only ever going to report
+        # an empty kitchen.
+        if spec.idle_when is not None:
+            try:
+                idle = spec.idle_when(context)
+            except Exception:
+                # A broken predicate must fail toward doing the work. Skipping
+                # a run the restaurant needed is worse than paying for one it
+                # did not.
+                idle = None
+            if idle:
+                return {"context": {**context, "_idle": idle}, "summary": idle}
+        return {"context": context}
 
     def reason(state: AgentState) -> dict[str, Any]:
         """Choose the actions to take.
@@ -85,7 +106,7 @@ def build_graph(spec: AgentSpec):
         than a scripted imitation of reasoning.
 
         The condition used to be ``is_fake() or spec.autonomous is not None``,
-        and since all 13 agents define an autonomous path that meant the model
+        and since every agent defines an autonomous path that meant the model
         was never asked anything — setting a real API key changed nothing at
         all. Which path runs is now a property of the configured provider, as
         it reads.
@@ -335,6 +356,27 @@ def build_graph(spec: AgentSpec):
         approved = [p for p in proposals if p.approved]
 
         summary = state.get("summary") or ""
+
+        # What the model *said* is not what the agent *did*, and on the model
+        # path the summary has been only the former.
+        #
+        # A smaller model will run one tool, read the result, and close with a
+        # sentence about what it is going to do next — "with the policies
+        # refreshed, I can now draft purchase orders" — and stop. The run is a
+        # legitimate success: it did some work and chose to stop. But the
+        # sentence is a promise, and it reaches the owner's brief looking like a
+        # report. Someone reads that purchase orders are coming and waits for
+        # approvals that will never arrive.
+        #
+        # So the prose never stands alone. A model-path run states what it
+        # actually called, which the model cannot overstate because it is read
+        # off the recorded actions rather than out of the answer.
+        context = state.get("context") or {}
+        if context.get("_path") == "model":
+            ran = [a.tool_name for a in (state.get("actions") or []) if not a.error]
+            done = f"Called: {', '.join(dict.fromkeys(ran))}." if ran else "Called no tools."
+            summary = f"{summary} [{done}]" if summary else done
+
         if approved or rejected:
             parts = [summary] if summary else []
             if approved:
@@ -347,7 +389,6 @@ def build_graph(spec: AgentSpec):
         # one broken tool should not lose the rest of the work. But the run must
         # not then report clean success: that is how a crash in the pacing agent
         # went unnoticed while it silently stopped sending tickets to the pass.
-        context = state.get("context") or {}
         if (
             context.get("_path") == "model"
             and context.get("_acted")
@@ -424,7 +465,11 @@ def build_graph(spec: AgentSpec):
     builder.add_node("record", record)
 
     builder.add_edge(START, "perceive")
-    builder.add_edge("perceive", "reason")
+    builder.add_conditional_edges(
+        "perceive",
+        lambda state: "record" if (state.get("context") or {}).get("_idle") else "reason",
+        {"reason": "reason", "record": "record"},
+    )
     builder.add_edge("reason", "act")
     builder.add_conditional_edges(
         "act",
@@ -454,7 +499,7 @@ def _use_model(spec: AgentSpec, state: AgentState) -> bool:
     """Which planner runs: the live model, or the agent's deterministic path.
 
     The configured provider decides. This used to also prefer the deterministic
-    path whenever an agent declared one — and all 13 do — so setting a real API
+    path whenever an agent declared one — and they all do — so setting a real API
     key changed precisely nothing and the model was never asked anything.
 
     ``_force_path`` in the trigger payload pins a single run either way, which is
@@ -521,9 +566,9 @@ def _system_prompt(spec: AgentSpec) -> str:
     "$49.80" for a dish priced in ringgit, because nothing in the prompt or the
     context said otherwise and a bare number defaults to dollars.
 
-    This belongs here rather than in the thirteen individual prompts. It is a
-    property of the deployment, not of any one agent's job, and thirteen copies
-    of it is thirteen chances to change twelve of them.
+    This belongs here rather than in each agent's own prompt. It is a property
+    of the deployment, not of any one agent's job, and a copy per agent is a
+    chance per agent to change all but one of them.
     """
     settings = get_settings()
     return (

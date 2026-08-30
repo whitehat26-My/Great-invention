@@ -46,7 +46,45 @@ class Settings(BaseSettings):
     # --- LLM ----------------------------------------------------------------
     # "fake" runs the whole platform deterministically with no API key and no
     # network, which is what the test suite and `simulate-day` use.
-    llm_provider: Literal["fake", "anthropic", "google"] = "fake"
+    llm_provider: Literal["fake", "anthropic", "google", "ollama"] = "fake"
+    # Who answers when a person is waiting. Unset means "the same as everything
+    # else", which is the right default and what every existing .env means.
+    #
+    # It exists because the two kinds of call have nothing in common but the
+    # API. A scheduled agent run at 06:00 can take three minutes on a local
+    # model and cost nothing; the same three minutes on the owner's question at
+    # lunchtime is a bot that looks dead. Splitting them lets a machine under
+    # the counter do the bulk work for free while the chat stays quick.
+    llm_provider_interactive: Literal["fake", "anthropic", "google", "ollama"] | None = None
+
+    # --- Ollama (local models: Hermes, Llama, Qwen, …) ---
+    # No key, no quota, no bill, and no network beyond the host itself. The cost
+    # is hardware: an 8B model quantised needs roughly 5GB of RAM, and answers
+    # in minutes on a CPU rather than seconds.
+    ollama_host: str = "http://localhost:11434"
+    # `:latest` because that is what a plain `ollama pull hermes3` leaves on the
+    # machine. Defaulting to a tag the documented command does not produce is a
+    # first run that fails on a model the owner correctly believes they pulled.
+    ollama_model_reasoning: str = "hermes3:latest"
+    ollama_model_conversational: str = "hermes3:latest"
+    # Ollama's own default context is far smaller than one agent's prompt, and
+    # an over-long prompt is truncated silently rather than refused — so the
+    # agent loses its instructions and never learns that it did.
+    ollama_context: int = 16384
+    # How long the model stays in memory after answering. Ollama's own default
+    # is a few minutes, which suits a laptop someone is using and not a machine
+    # running a restaurant: the agents are scheduled an hour apart, so nearly
+    # every run pays a cold start it need not.
+    #
+    # The trade is the whole of it. Holding the model costs ~5GB of RAM that
+    # nothing else can use; dropping it costs 20-30 seconds at the front of the
+    # next answer. That is free on a scheduled run nobody is waiting for, and it
+    # is the difference between a quick reply and an apparently dead bot on a
+    # question the owner just asked.
+    #
+    # "1h" keeps it resident on a machine with room to spare. Set "0" to unload
+    # immediately where memory is tight, or a longer duration where it is not.
+    ollama_keep_alive: str = "1h"
 
     # --- Anthropic ---
     anthropic_api_key: str = ""
@@ -60,8 +98,8 @@ class Settings(BaseSettings):
     #
     # They are deliberately *different* Flash models. The free-tier quota is
     # `GenerateRequestsPerMinutePerProjectPerModel` — five requests a minute,
-    # counted per model — so putting both tiers on one id makes the thirteen
-    # agents queue behind each other for no reason.
+    # counted per model — so putting both tiers on one id makes the agents
+    # queue behind each other for no reason.
     google_api_key: str = ""
     google_model_reasoning: str = "gemini-3.6-flash"
     google_model_conversational: str = "gemini-3.5-flash"

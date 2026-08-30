@@ -50,7 +50,9 @@ _BACKOFF_START = 2.0
 _BACKOFF_CAP = 60.0
 
 
-def default_children(include_api: bool = True) -> dict[str, list[str]]:
+def default_children(
+    include_api: bool = True, include_tunnel: bool = False
+) -> dict[str, list[str]]:
     """The processes a running restaurant is made of.
 
     Launched as ``python -m`` against this interpreter, so children run the
@@ -92,6 +94,10 @@ def default_children(include_api: bool = True) -> dict[str, list[str]]:
             "--port",
             "8000",
         ]
+    if include_tunnel:
+        # Last, and only with the API: a public address for a service that is
+        # not running publishes nothing.
+        children["tunnel"] = [python, "-m", "restaurant_ai.tunnel"]
     return children
 
 

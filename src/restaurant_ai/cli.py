@@ -12,7 +12,7 @@ from restaurant_ai.logging_setup import configure_logging
 
 app = typer.Typer(
     name="restaurant-ai",
-    help="Autonomous restaurant operations: 11 agents across 6 departments.",
+    help="Autonomous restaurant operations: AI agents across 6 departments.",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -106,6 +106,131 @@ def seed(
         typer.echo(f"  {key:22} {value}")
 
 
+@app.command("migrate")
+def migrate() -> None:
+    """Bring the database schema up to date after a pull.
+
+    `up` already does this on the way in, and compose has a `migrate` service
+    that runs before anything reads the database — so this existed everywhere
+    except as something a person could type. That gap only shows up at the
+    moment it costs the most: a pull brings a new table, the owner looks for the
+    obvious command, and the answer is to run something else and trust that it
+    happens on the way past.
+
+    Idempotent. On an up-to-date database it is a no-op that costs a second.
+    """
+    from restaurant_ai.services import migrate_database
+
+    migrated, note = migrate_database()
+    typer.echo(note)
+    if not migrated:
+        raise typer.Exit(code=1)
+
+
+@app.command("start-real")
+def start_real(
+    yes: bool = typer.Option(False, "--yes", help="Confirm erasing everything."),
+    menu: str = typer.Option(None, help="Menu spreadsheet to import. Optional."),
+) -> None:
+    """Empty the restaurant of invented data and set it up to hold real data.
+
+    The three steps this replaces were the wrong three. `reset-db` leaves a
+    database with no chart of accounts, which is not a neutral starting point —
+    it is one where the books can never be posted. `seed` puts the accounts back
+    and fifteen demo dishes, fake staff, fake suppliers and eight weeks of
+    invented trading with them. Nobody wants the second to get the first, and
+    doing it by hand is how a demo quietly becomes the data.
+
+    What is left afterwards: allergen codes, menu sections and a chart of
+    accounts, which are the same in every restaurant. No dishes, no staff, no
+    suppliers, no orders — those are yours, and an empty table is honest where a
+    plausible one is not.
+    """
+    from restaurant_ai.config import get_settings
+    from restaurant_ai.db.base import get_engine, session_scope
+    from restaurant_ai.db.seed import seed_essentials
+    from restaurant_ai.services import ensure_database, migrate_database
+
+    if not yes:
+        typer.echo(
+            "\n  This erases every order, every agent run and every approval in this\n"
+            "  database. Re-run with --yes when you mean it.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    from sqlalchemy import text
+
+    # Said before the wait, not after it. `ensure_database` can run `docker
+    # compose up`, pull images and then wait two minutes for Postgres to answer
+    # — and every word about that arrives at the end. A command that prints
+    # nothing for two minutes has not started as far as anyone watching is
+    # concerned, and the reasonable thing to do with it is press Ctrl-C.
+    typer.echo(
+        "\n  Checking the database (starting Docker if it is not up — this can take a minute)…"
+    )
+
+    # Starting Postgres is this command's job, not the owner's. Sending them to
+    # `up` for it was worse than unhelpful: `up` starts the whole restaurant in
+    # a window they would then have to kill, and the four processes it starts
+    # are precisely what should not be running while the schema is dropped.
+    ok, message = ensure_database()
+    if not ok:
+        typer.echo(f"\n  {message}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"  {message}")
+
+    settings = get_settings()
+    typer.echo(f"  Emptying {settings.postgres_db} at {settings.postgres_host}…")
+    with get_engine().begin() as conn:
+        conn.execute(text("DROP SCHEMA public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
+
+    migrated, note = migrate_database()
+    if not migrated:
+        typer.echo(f"\n  {note}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"  {note}")
+
+    with session_scope() as session:
+        counts = seed_essentials(session)
+    for key, value in counts.items():
+        typer.echo(f"  {key:16} {value}")
+
+    if menu:
+        typer.echo(f"\n  Importing {menu}…")
+        from restaurant_ai.db.base import get_sessionmaker
+        from restaurant_ai.db.catalog_import import CatalogImportError, import_catalog
+
+        session = get_sessionmaker()()
+        try:
+            # Uncosted is allowed and then reported: a menu with no recipes is
+            # the normal state on day one, and refusing it would mean no menu at
+            # all. `readiness` is what will not let it be forgotten.
+            summary = import_catalog(session, menu, replace_menu=True, allow_uncosted=True)
+            session.commit()
+        except (CatalogImportError, FileNotFoundError) as exc:
+            session.rollback()
+            typer.echo(f"\n  {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        finally:
+            session.close()
+        for key, count in summary.counts.items():
+            typer.echo(f"    {key:12} {count}")
+        if summary.uncosted:
+            # Named, not listed. A hundred and forty-six SKUs is not a report,
+            # and the number plus what it costs you is the whole message.
+            typer.echo(
+                f"\n  {len(summary.uncosted)} of {summary.counts.get('menu_items', 0)} "
+                "dishes have no recipe yet, so nothing can say what they earn."
+            )
+
+    typer.echo(
+        "\n  Empty and ready. Nothing here is invented.\n"
+        "  `restaurant-ai readiness` says what each agent still needs."
+    )
+
+
 @app.command("reset-db")
 def reset_db(
     yes: bool = typer.Option(False, "--yes", help="Confirm dropping every table."),
@@ -125,7 +250,7 @@ def reset_db(
     with get_engine().begin() as conn:
         conn.execute(text("DROP SCHEMA public CASCADE"))
         conn.execute(text("CREATE SCHEMA public"))
-    typer.echo("Schema dropped. Run `make migrate && make seed`.")
+    typer.echo("Schema dropped. Run `restaurant-ai migrate`, then `restaurant-ai seed`.")
 
 
 @app.command("brief")
@@ -311,7 +436,7 @@ def menu_cost(sku: str = typer.Argument(None, help="Limit to one SKU.")) -> None
 
 @app.command("agents")
 def list_agents() -> None:
-    """List the 13 agents by department."""
+    """List every agent by department."""
     from restaurant_ai.kernel.registry import all_agents, departments
 
     agents = all_agents()
@@ -462,7 +587,7 @@ def live_check(
 
     Worth spending a few cents on before a full pass: it settles whether the
     credentials work and whether the request shape is one the configured models
-    actually accept, rather than discovering both thirteen agents into a run.
+    actually accept, rather than discovering either one partway through a full pass.
     """
     from langchain_core.messages import HumanMessage
 
@@ -724,7 +849,7 @@ def simulate(
 def _report_reasoning(outcome, transcript: bool = False) -> None:
     """Say which planner ran, what it cost, and optionally what it said.
 
-    The token counts are the point: an estimate of what thirteen agents cost to
+    The token counts are the point: an estimate of what a full pass costs to
     run is guesswork, and this is the measurement.
     """
     from langchain_core.messages import AIMessage, ToolMessage
@@ -815,6 +940,89 @@ def ask(
     typer.echo(answer(question))
 
 
+@app.command("dashboard")
+def dashboard(
+    port: int = typer.Option(8000, help="Where the API is listening."),
+    open_browser: bool = typer.Option(True, "--open/--no-open", help="Open it for you."),
+) -> None:
+    """Print the dashboard's address, with the key already in it.
+
+    The dashboard refuses anyone without the key, and a browser address bar
+    cannot send a header — so the key travels in the URL, and the owner was left
+    to build that URL by hand out of a secret in a file. Opening
+    `localhost:8000/dashboard` and being refused looks exactly like a broken
+    dashboard, which is how a working page becomes one nobody visits.
+
+    Says whether anything is actually listening, too. A correct address for a
+    process that is not running is its own confusion.
+    """
+    import webbrowser
+
+    from restaurant_ai.config import get_settings
+
+    key = get_settings().approval_api_key
+    if not key:
+        typer.echo(
+            "\n  APPROVAL_API_KEY is not set, so the dashboard refuses every request —\n"
+            "  including yours. Add a long random value to .env as APPROVAL_API_KEY,\n"
+            "  then restart `restaurant-ai up`.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    base = f"http://localhost:{port}"
+    live = False
+    try:
+        import httpx
+
+        live = httpx.get(f"{base}/health", timeout=2).status_code < 500
+    except Exception:
+        live = False
+
+    typer.echo(f"\n  Dashboard:   {base}/dashboard?key={key}")
+    typer.echo(f"  System map:  {base}/dashboard/map?key={key}")
+    if not live:
+        typer.echo(
+            f"\n  Nothing is answering on port {port} — start `restaurant-ai up` first,\n"
+            "  and leave that window open."
+        )
+        raise typer.Exit(code=1)
+
+    typer.echo("\n  The link carries the key. Treat it like a password.")
+    if open_browser:
+        webbrowser.open(f"{base}/dashboard?key={key}")
+        typer.echo("  Opened in your browser.")
+
+
+@app.command("readiness")
+def readiness() -> None:
+    """What is real, and what is still a demonstration.
+
+    `doctor` answers "is it running". This answers the question that comes
+    after, and the one that actually decides whether to act on a number: can
+    each agent tell you the truth yet, and if not, what is missing.
+
+    It never says "add data". Every gap names the specific thing and how it
+    arrives, because "insufficient data" is where most of these stop.
+    """
+    from restaurant_ai.db.base import session_scope
+    from restaurant_ai.faults import short_fault
+    from restaurant_ai.readiness import look, render
+
+    try:
+        with session_scope() as session:
+            typer.echo(render(look(session)))
+    except Exception as exc:
+        # Asking what is real should never answer with a page of SQLAlchemy.
+        typer.echo(
+            f"\n  Cannot read the restaurant: {short_fault(exc)}\n"
+            "  The database is not running. `restaurant-ai up` starts it along with "
+            "everything else.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+
 @app.command("doctor")
 def doctor() -> None:
     """Why nothing happened — check every link in the chain, change nothing.
@@ -834,6 +1042,11 @@ def up(
     with_api: bool = typer.Option(
         True, help="Also run the API (dashboard, system map, webhooks) on :8000."
     ),
+    with_tunnel: bool = typer.Option(
+        False,
+        "--with-tunnel",
+        help="Also publish the dashboard on a public HTTPS address, and send the link.",
+    ),
 ) -> None:
     """Run the whole restaurant in one window: listener, beat, worker, API.
 
@@ -843,22 +1056,33 @@ def up(
     instantly every time is reported and given up on, because restarting a bad
     config forever is not resilience.
 
-    Close this window and the restaurant is off. On Windows, Task Scheduler can
-    open it for you at logon — DEPLOY.md has the exact line.
+    ``--with-tunnel`` adds the public address for the dashboard. It belongs here
+    rather than in a second window for the same reason everything else does: a
+    window someone has to remember is a window that gets closed, and nothing
+    reports its absence. Supervised, the quick tunnel's changing name stops
+    mattering — every restart sends the new link to the phone that opens it.
+
+    Close this window and the restaurant is off. On Windows, `restaurant-ai
+    install-startup` opens it for you at logon.
     """
     from restaurant_ai.config import get_settings
     from restaurant_ai.services import ensure_database, migrate_database
     from restaurant_ai.supervisor import default_children, run
+    from restaurant_ai.tunnel import install_hint
+    from restaurant_ai.tunnel import installed as cloudflared_installed
 
     # The one dependency every child shares. If Docker is present and awake,
     # starting it is our job, not the owner's; when it is not, say which of the
     # three situations this machine is in, each with its own fix — rather than
     # supervising four crash loops that all mean "Postgres is not running".
+    typer.echo(
+        "\n  Checking the database (starting Docker if it is not up — this can take a minute)…"
+    )
     ok, message = ensure_database()
     if not ok:
         typer.echo(f"\n  {message}", err=True)
         raise typer.Exit(code=1)
-    typer.echo(f"\n  {message}")
+    typer.echo(f"  {message}")
 
     # The same step compose runs as its `migrate` service, before anything
     # reads the database. Without it a fresh machine starts four processes
@@ -870,9 +1094,36 @@ def up(
     typer.echo(f"  {note}")
 
     settings = get_settings()
+
+    # Both refusals happen before anything starts. Learning that the tunnel
+    # cannot run from a line in the middle of four processes' logs is how it
+    # goes unnoticed, and an owner who asked for a public address and did not
+    # get one should be told, not left to discover it when the link never
+    # arrives.
+    if with_tunnel:
+        if not settings.approval_api_key:
+            typer.echo(
+                "\n  --with-tunnel needs APPROVAL_API_KEY set: the dashboard refuses to\n"
+                "  serve without it, so a public address would publish a locked door.\n"
+                "  Put a long random value in .env first.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        if not cloudflared_installed():
+            typer.echo(f"\n  {install_hint()}", err=True)
+            raise typer.Exit(code=1)
+        if not with_api:
+            typer.echo(
+                "\n  --with-tunnel publishes the API, so it needs --with-api.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
     typer.echo(f"\n  {settings.restaurant_name} — everything, in this window.")
+    if with_tunnel:
+        typer.echo("  The dashboard's public link goes to the approvals chat when it opens.")
     typer.echo("  Ctrl-C stops the lot. Close the window and the restaurant is off.\n")
-    raise typer.Exit(code=run(default_children(include_api=with_api)))
+    raise typer.Exit(code=run(default_children(include_api=with_api, include_tunnel=with_tunnel)))
 
 
 @app.command("install-startup")

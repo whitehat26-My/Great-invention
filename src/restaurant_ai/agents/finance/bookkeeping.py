@@ -435,6 +435,14 @@ BOOKKEEPING_AGENT = register(
             "variance account where someone will see it, and say what is unexplained. "
             "Journals must balance to the cent, and a posted journal is never edited - "
             "corrections are new reversing entries."
+            "HOW YOU WORK\n"
+            "1. `reconcile_day` — match takings against card settlements and payouts.\n"
+            "2. `post_journals` — post sales, COGS and labour in double entry.\n"
+            "\n"
+            "Both, in that order, every night. A day reconciled but never posted leaves the\n"
+            "books empty while looking finished, and the exceptions you found go nowhere.\n"
+            "Post even when there are exceptions; they belong in the variance account where\n"
+            "someone will see them, not in a run that stopped early.\n"
         ),
         model_tier="reasoning",
         tools=[
