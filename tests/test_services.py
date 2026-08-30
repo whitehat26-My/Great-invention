@@ -186,3 +186,52 @@ class TestTheMigrateCommand:
         source = inspect.getsource(cli.reset_db)
         assert "make migrate" not in source
         assert "restaurant-ai migrate" in source
+
+
+class TestStartRealBringsItsOwnDatabase:
+    """It was refusing with "run `restaurant-ai up`", which is worse than
+    unhelpful: `up` starts the whole restaurant in a window the owner would
+    then have to kill, and those four processes are exactly what must not be
+    running while the schema is dropped underneath them."""
+
+    def test_it_starts_the_database_before_dropping_anything(self, monkeypatch):
+        from typer.testing import CliRunner
+
+        from restaurant_ai.cli import app
+
+        order = []
+        monkeypatch.setattr(
+            "restaurant_ai.services.ensure_database",
+            lambda: (order.append("ensure"), (True, "Postgres is up."))[1],
+        )
+        monkeypatch.setattr(
+            "restaurant_ai.db.base.get_engine",
+            lambda: (_ for _ in ()).throw(AssertionError("dropped before ensuring")),
+        )
+        result = CliRunner().invoke(app, ["start-real", "--yes"])
+
+        assert order == ["ensure"], "the database must be started first"
+        assert "dropped before ensuring" not in result.output
+
+    def test_a_database_it_cannot_start_stops_it(self, monkeypatch):
+        from typer.testing import CliRunner
+
+        from restaurant_ai.cli import app
+
+        monkeypatch.setattr(
+            "restaurant_ai.services.ensure_database",
+            lambda: (False, "Docker Desktop is installed but not running."),
+        )
+        result = CliRunner().invoke(app, ["start-real", "--yes"])
+
+        assert result.exit_code == 1
+        assert "not running" in result.output
+
+    def test_it_refuses_without_yes(self):
+        from typer.testing import CliRunner
+
+        from restaurant_ai.cli import app
+
+        result = CliRunner().invoke(app, ["start-real"])
+        assert result.exit_code == 1
+        assert "erases every order" in result.output

@@ -149,7 +149,7 @@ def start_real(
     from restaurant_ai.config import get_settings
     from restaurant_ai.db.base import get_engine, session_scope
     from restaurant_ai.db.seed import seed_essentials
-    from restaurant_ai.services import migrate_database
+    from restaurant_ai.services import ensure_database, migrate_database
 
     if not yes:
         typer.echo(
@@ -161,8 +161,18 @@ def start_real(
 
     from sqlalchemy import text
 
+    # Starting Postgres is this command's job, not the owner's. Sending them to
+    # `up` for it was worse than unhelpful: `up` starts the whole restaurant in
+    # a window they would then have to kill, and the four processes it starts
+    # are precisely what should not be running while the schema is dropped.
+    ok, message = ensure_database()
+    if not ok:
+        typer.echo(f"\n  {message}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"\n  {message}")
+
     settings = get_settings()
-    typer.echo(f"\n  Emptying {settings.postgres_db} at {settings.postgres_host}…")
+    typer.echo(f"  Emptying {settings.postgres_db} at {settings.postgres_host}…")
     with get_engine().begin() as conn:
         conn.execute(text("DROP SCHEMA public CASCADE"))
         conn.execute(text("CREATE SCHEMA public"))
@@ -933,10 +943,21 @@ def readiness() -> None:
     arrives, because "insufficient data" is where most of these stop.
     """
     from restaurant_ai.db.base import session_scope
+    from restaurant_ai.faults import short_fault
     from restaurant_ai.readiness import look, render
 
-    with session_scope() as session:
-        typer.echo(render(look(session)))
+    try:
+        with session_scope() as session:
+            typer.echo(render(look(session)))
+    except Exception as exc:
+        # Asking what is real should never answer with a page of SQLAlchemy.
+        typer.echo(
+            f"\n  Cannot read the restaurant: {short_fault(exc)}\n"
+            "  The database is not running. `restaurant-ai up` starts it along with "
+            "everything else.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
 
 
 @app.command("doctor")

@@ -618,7 +618,8 @@ class TestLoggingWhatSold:
         assert described.startswith("sold: proposed")
         card = [p for m, p in telegram if m == "sendMessage"][0]
         assert "Nasi Lemak Biasa" in card["text"]
-        assert "RM 207.50" in card["text"]
+        # 20 nasi lemak biasa at 4.00 + 35 teh tarik at 2.50, per the printed menu.
+        assert "RM 167.50" in card["text"]
         assert card["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "sold:go"
 
     def test_nothing_is_written_until_the_press(self, real_menu, telegram):
