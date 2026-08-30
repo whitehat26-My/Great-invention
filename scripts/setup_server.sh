@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 #
-# Set up a fresh Oracle Cloud (or any Ubuntu) server to run the restaurant.
+# Set up a fresh Ubuntu server to run the restaurant.
+#
+# Nothing here is specific to one provider. It has been written against
+# Oracle's free tier and works the same on a Malaysian VPS, a Hetzner box or
+# a Raspberry Pi: what it needs is Ubuntu, root, and Docker.
 #
 # Everything here happens on the server, after `ssh ubuntu@<ip>`. It is
 # idempotent: run it again after a failure, or after changing .env, and it picks
@@ -11,7 +15,7 @@
 # confusing afternoon — so it writes the file, says what to put in it, and
 # waits to be run again.
 #
-#   bash scripts/oracle_setup.sh
+#   bash scripts/setup_server.sh
 #
 set -euo pipefail
 
@@ -68,7 +72,7 @@ note "Docker $(docker --version | awk '{print $3}' | tr -d ,) is up"
 # --- 4. The code ------------------------------------------------------------
 if [[ ! -f "$HERE/docker-compose.yml" ]]; then
   die "Run this from inside the cloned repository:
-    git clone $REPO && cd Great-invention && bash scripts/oracle_setup.sh"
+    git clone $REPO && cd Great-invention && bash scripts/setup_server.sh"
 fi
 cd "$HERE"
 say "Updating the code"

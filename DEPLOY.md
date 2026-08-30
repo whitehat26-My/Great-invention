@@ -485,7 +485,7 @@ ssh -i /path/to/your-key ubuntu@<the ip>
 
 git clone https://github.com/whitehat26-My/Great-invention.git
 cd Great-invention
-bash scripts/oracle_setup.sh
+bash scripts/setup_server.sh
 ```
 
 It runs three times on purpose, and says why each time:
@@ -513,6 +513,46 @@ port at all, so you can leave every one of those defaults alone.
 
 The one thing to set is the timezone, or the nightly close fires at the wrong
 hour: `sudo timedatectl set-timezone Asia/Kuala_Lumpur`.
+
+## Running the till on the same provider
+
+A Malaysian VPS is the sensible choice for a Malaysian restaurant: FPX rather
+than a card, support in the same timezone, and the data stays in the country,
+which matters the day anyone asks about PDPA. Buy a **VPS with root access**,
+not shared hosting — a cPanel plan cannot run Docker, and that is the mistake
+that is easy to make and expensive to unwind.
+
+The temptation once you have a server is to put the till on it too. One bill,
+one machine, one thing to remember. It is worth separating two questions that
+sound like one.
+
+**The same provider is a good idea.** One relationship, one payment method, one
+support line that answers in your timezone.
+
+**The same server is not.** These two systems are not equally important and
+should not share a fate. If this platform's database eats the memory on a
+Tuesday afternoon, the till stops taking orders — and a restaurant that cannot
+take an order is shut. Nothing here is worth that. Two small VPSes at the same
+provider cost a few ringgit more than one larger one and cannot take each other
+down.
+
+**And the till probably should not be in the cloud at all.** A cloud POS stops
+selling when the internet drops, which on restaurant wifi is not a hypothetical.
+The till belongs on a machine in the building, where a dead line is a slow
+afternoon rather than a closed one.
+
+That gives the shape worth building toward:
+
+    the till, in the restaurant  ──POST /webhooks/pos──▶  this platform, hosted
+
+The till keeps working through an outage and sends what it recorded when the
+line comes back. This platform is always on, always reachable from a phone, and
+never something the restaurant depends on to take money.
+
+It is also why the POS stays its own repository. The two systems have different
+uptime requirements, different failure consequences and different release
+rhythms, and a shared deployment is the fastest way to give the important one
+the release rhythm of the unimportant one.
 
 ## Picking a host
 
