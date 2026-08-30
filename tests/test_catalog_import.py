@@ -53,6 +53,7 @@ class TestTheTemplateIsTrue:
 
         assert summary.counts == {
             "suppliers": 1,
+            "staff": 2,
             "ingredients": 4,
             "sub_recipes": 1,
             "menu_items": 1,
@@ -321,3 +322,89 @@ class TestAFileThatIsNotWhereYouAre:
         # Not a hint — the command, ready to paste.
         assert "restaurant-ai import-menu" in result.output
         assert str(downloads / "menu.xlsx") in result.output
+
+
+class TestStaffCanActuallyBeGivenToHenry:
+    """`readiness` said "Henry needs who works here, their roles, and when they
+    can work" while there was no sheet, no command and no way to say it. Advice
+    for something that could not be done."""
+
+    def _book(self, tmp_path, rows):
+        import shutil
+
+        from openpyxl import load_workbook
+
+        path = tmp_path / "with-staff.xlsx"
+        shutil.copy("menu/the-great-invention-menu.xlsx", path)
+        wb = load_workbook(path)
+        for row in rows:
+            wb["Staff"].append(row)
+        wb.save(path)
+        return str(path)
+
+    def test_a_staff_row_becomes_someone_henry_can_roster(self, db, tmp_path):
+        from sqlalchemy import select
+
+        from restaurant_ai.db.catalog_import import import_catalog
+        from restaurant_ai.db.models import Staff
+
+        path = self._book(
+            tmp_path,
+            [["EMP-900", "Test Person", "server", 9.5, 48, 11, "", "0,1,2", "10:00", "23:00"]],
+        )
+        import_catalog(db, path, allow_uncosted=True, replace_menu=True)
+
+        person = db.execute(select(Staff).where(Staff.employee_code == "EMP-900")).scalar_one()
+        assert person.role == "server"
+        assert sorted(a.weekday for a in person.availability) == [0, 1, 2]
+        assert str(person.availability[0].start_time) == "10:00:00"
+
+    def test_a_role_that_is_not_a_role_is_refused_by_name(self, db, tmp_path):
+        from restaurant_ai.db.catalog_import import CatalogImportError, import_catalog
+
+        path = self._book(
+            tmp_path,
+            [["EMP-901", "Test", "chief cook", 9.5, 48, 11, "", "0", "10:00", "23:00"]],
+        )
+        with pytest.raises(CatalogImportError) as raised:
+            import_catalog(db, path, allow_uncosted=True, replace_menu=True)
+        assert "chief_cook" in str(raised.value)
+        assert "server" in str(raised.value), "it should list what the roles actually are"
+
+    def test_re_importing_replaces_availability_rather_than_adding_to_it(self, db, tmp_path):
+        """An edited spreadsheet is the truth, not something added to what was
+        there before — otherwise a corrected roster keeps the old days too."""
+        from sqlalchemy import select
+
+        from restaurant_ai.db.catalog_import import import_catalog
+        from restaurant_ai.db.models import Staff
+
+        first = self._book(
+            tmp_path,
+            [["EMP-902", "Test", "server", 9.5, 48, 11, "", "0,1,2,3,4", "10:00", "23:00"]],
+        )
+        import_catalog(db, first, allow_uncosted=True, replace_menu=True)
+
+        second = self._book(
+            tmp_path, [["EMP-902", "Test", "server", 9.5, 48, 11, "", "5,6", "10:00", "23:00"]]
+        )
+        import_catalog(db, second, allow_uncosted=True, replace_menu=True)
+
+        person = db.execute(select(Staff).where(Staff.employee_code == "EMP-902")).scalar_one()
+        assert sorted(a.weekday for a in person.availability) == [5, 6]
+
+    def test_importing_the_same_sheet_twice_is_not_an_error(self, db, tmp_path):
+        """The obvious thing to do after a failed import is run it again.
+
+        `clear()` left the removals pending and SQLAlchemy inserted the new
+        availability before issuing the deletes, so the second run collided with
+        the unique constraint on (staff, weekday, start) — and the message named
+        a UUID rather than anything an owner could act on."""
+        from restaurant_ai.db.catalog_import import import_catalog
+
+        path = self._book(
+            tmp_path,
+            [["EMP-903", "Test", "server", 9.5, 48, 11, "", "0,1,2", "10:00", "23:00"]],
+        )
+        import_catalog(db, path, allow_uncosted=True, replace_menu=True)
+        import_catalog(db, path, allow_uncosted=True, replace_menu=True)
