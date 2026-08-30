@@ -688,3 +688,66 @@ class TestGreetingsAreAnsweredFree:
         assert described == "greeted"
         text = [p for m, p in telegram if m == "sendMessage"][0]["text"]
         assert "/agents" in text
+
+
+class TestLoggingSalesByJustSaying:
+    """Typing `/sold` every night for the rest of the year is a tax on the one
+    habit this system most needs the owner to keep."""
+
+    @pytest.fixture
+    def real_menu(self, db):
+        from restaurant_ai.db.catalog_import import import_catalog
+
+        import_catalog(
+            db, "menu/the-great-invention-menu.xlsx", allow_uncosted=True, replace_menu=True
+        )
+        return db
+
+    def _sold_intent(self, monkeypatch):
+        from restaurant_ai.assistant import Intent
+
+        monkeypatch.setattr(
+            "restaurant_ai.assistant.route",
+            lambda text, history=None: Intent(kind="sold"),
+        )
+
+    def test_a_plain_sentence_offers_the_same_card(self, real_menu, telegram, monkeypatch):
+        self._sold_intent(monkeypatch)
+
+        listener.handle_update(say("20 nasi lemak biasa, 35 teh tarik, 90 covers"))
+
+        card = [p for m, p in telegram if m == "sendMessage"][-1]
+        assert "Recording today as" in card["text"]
+        assert "RM 167.50" in card["text"]
+        assert card["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "sold:go"
+
+    def test_nothing_is_written_without_the_press(self, real_menu, telegram, monkeypatch):
+        """The whole reason this can be read from a chat message at all."""
+        from sqlalchemy import func, select
+
+        from restaurant_ai.db.models import OrderHeader
+
+        before = real_menu.execute(select(func.count()).select_from(OrderHeader)).scalar_one()
+        self._sold_intent(monkeypatch)
+
+        listener.handle_update(say("20 nasi lemak biasa, 35 teh tarik"))
+
+        after = real_menu.execute(select(func.count()).select_from(OrderHeader)).scalar_one()
+        assert after == before
+
+    def test_the_slash_command_still_works(self, real_menu, telegram, monkeypatch):
+        """Both paths reach the same place; the owner should not have to
+        remember which one this system wanted."""
+        listener.handle_update(say("/sold 20 nasi lemak biasa, 35 teh tarik"))
+
+        card = [p for m, p in telegram if m == "sendMessage"][-1]
+        assert "Recording today as" in card["text"]
+
+    def test_an_unreadable_dish_is_reported_rather_than_recorded(self, db, telegram, monkeypatch):
+        self._sold_intent(monkeypatch)
+
+        listener.handle_update(say("20 flying spaghetti monster"))
+
+        said = [p for m, p in telegram if m == "sendMessage"][-1]["text"]
+        assert "not on the menu" in said
+        assert "Nothing was written" in said

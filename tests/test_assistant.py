@@ -706,3 +706,54 @@ class TestItFollowsAConversation:
         monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Model())
 
         assert answer("how much rice?", session=db) == "About 40kg."
+
+
+class TestTellingApartFromAsking:
+    """A list of dishes with numbers is the day's takings. A number inside a
+    question is still a question, and reading "how many nasi lemak did we sell?"
+    as a sales report would offer to record the answer back at them."""
+
+    def _verdict(self, monkeypatch, said: str):
+        from restaurant_ai.assistant import route
+
+        class Model:
+            def invoke(self, messages):
+                class R:
+                    content = said
+
+                return R()
+
+        monkeypatch.setattr("restaurant_ai.kernel.llm.is_fake", lambda interactive=False: False)
+        monkeypatch.setattr("restaurant_ai.kernel.llm.get_model", lambda tier, **kw: Model())
+        return route("whatever the owner typed")
+
+    def test_a_sold_verdict_is_understood(self, monkeypatch):
+        assert self._verdict(monkeypatch, "SOLD").kind == "sold"
+
+    def test_it_survives_the_dressing_models_add(self, monkeypatch):
+        """Same reason QUESTION had to: models answer a one-word contract in
+        markdown, and a formatting difference is not a reason to lose a day's
+        takings."""
+        assert self._verdict(monkeypatch, "**SOLD**").kind == "sold"
+        assert self._verdict(monkeypatch, "Answer: SOLD").kind == "sold"
+
+    def test_a_question_is_still_a_question(self, monkeypatch):
+        assert self._verdict(monkeypatch, "QUESTION").kind == "question"
+
+    def test_the_prompt_draws_the_line_it_needs_to(self):
+        """The distinction is whether the owner is telling you what happened or
+        asking you about it, and the prompt has to say so with examples — the
+        rule alone is not something a smaller model can apply."""
+        from restaurant_ai.assistant import _ROUTER_PROMPT
+
+        # Whitespace-normalised: the prompt is wrapped for reading, and a line
+        # break falling in a different place is not a change in what it says.
+        prompt = " ".join(_ROUTER_PROMPT.split())
+        assert "SOLD" in prompt
+        assert "how many nasi lemak did we sell?" in prompt
+        assert "telling you what happened or asking you about it" in prompt
+
+    def test_an_unreadable_verdict_still_answers_rather_than_records(self, monkeypatch):
+        """The old asymmetry, unchanged: a guess that only reads is safe, and
+        the guess that offers to write the books is the one to avoid."""
+        assert self._verdict(monkeypatch, "I think they want...").kind == "question"

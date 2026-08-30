@@ -124,6 +124,7 @@ TELL ME
 COMMANDS
   /sold ...    log what sold today
                e.g. /sold 20 nasi lemak biasa, 35 teh tarik, 90 covers
+               (or just say it: "20 nasi lemak, 35 teh tarik, 90 covers")
   /run <name>  run that agent now, no guessing  (e.g. /run rain)
   /agents      who does what
   /brief       tonight's brief, right now
@@ -245,6 +246,15 @@ def _instruction_or_question(chat_id: Any, text: str) -> str:
         api("sendMessage", chat_id=chat_id, text=greeting)
         keep(greeting)
         return "greeted"
+
+    if intent.kind == "sold":
+        # The same card `/sold` produces, from a sentence. Nothing is written
+        # until the button, so reading a chat message as takings costs a card
+        # the owner ignores — and refusing to would cost them the command every
+        # night for the rest of the year.
+        recorded = _offer_to_record(chat_id, text)
+        keep(f"[offered to record: {text[:80]}]")
+        return recorded
 
     if intent.kind == "run" and intent.agent:
         _propose_run(chat_id, intent.agent, text)
@@ -395,11 +405,24 @@ _PENDING_TAKINGS: dict[str, str] = {}
 
 
 def _sold_command(chat_id: Any, text: str) -> str:
-    """Read back what sold, in money, before writing any of it."""
+    """`/sold ...`, for anyone who prefers a command to a sentence."""
+    said = text.split(maxsplit=1)[1].strip() if " " in text else ""
+    return _offer_to_record(chat_id, said, prompt_when_empty=True)
+
+
+def _offer_to_record(chat_id: Any, said: str, prompt_when_empty: bool = False) -> str:
+    """Read back what sold, in money, before writing any of it.
+
+    Reached two ways and behaving identically either way: `/sold 20 nasi lemak`
+    and plain "20 nasi lemak, 35 teh tarik" are the same message with different
+    ceremony, and the owner should not have to remember which one this system
+    wanted. Nothing is written by either until the button is pressed.
+    """
     from restaurant_ai.db.base import session_scope
     from restaurant_ai.takings import read
 
-    said = text.split(maxsplit=1)[1].strip() if " " in text else ""
+    if not said and not prompt_when_empty:
+        return "sold: nothing said"
     if not said:
         api(
             "sendMessage",

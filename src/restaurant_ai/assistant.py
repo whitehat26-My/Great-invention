@@ -353,9 +353,15 @@ def _offline_answer(question: str, snapshot: dict[str, Any]) -> str:
 class Intent:
     """What the owner wants, as far as the desk can tell.
 
-    ``kind`` is one of ``question``, ``run``, ``greeting`` or ``unclear``. Uncertainty is a
-    first-class answer: a desk that guesses between two agents is worse than one
-    that asks, because the owner finds out which it picked only afterwards.
+    ``kind`` is one of ``question``, ``sold``, ``run``, ``greeting`` or
+    ``unclear``. Uncertainty is a first-class answer: a desk that guesses between
+    two agents is worse than one that asks, because the owner finds out which it
+    picked only afterwards.
+
+    ``sold`` is the exception to that caution, and can afford to be: it writes
+    nothing. The owner is shown what was read, in money, and presses a button —
+    so reading a chat message as the day's takings costs a card they ignore,
+    while refusing to costs them typing `/sold` for the rest of the year.
     """
 
     kind: str
@@ -399,6 +405,7 @@ Answer with exactly one line and nothing else — no explanation, no punctuation
 beyond what is shown:
 
 QUESTION
+SOLD
 RUN <agent>
 UNCLEAR
 
@@ -408,6 +415,15 @@ The agents you may name:
 Rules:
 - Asking *about* the restaurant is QUESTION, even when it names an agent.
   "why did Rain order rice?" and "how much stock do we have?" are QUESTION.
+- A list of dishes with numbers is the day's takings: SOLD.
+  "20 nasi lemak, 35 teh tarik" is SOLD. "sold 40 roti kosong today" is SOLD.
+  "we did 90 covers and 30 nasi goreng" is SOLD. So is the same thing in Malay.
+  Nothing is written from this — the owner is shown what it read and presses a
+  button — so read a list of dishes and quantities as SOLD rather than asking.
+- But a number in a *question* is still a QUESTION.
+  "how many nasi lemak did we sell?" is QUESTION. "is 20 teh tarik normal for a
+  Tuesday?" is QUESTION. The difference is whether they are telling you what
+  happened or asking you about it.
 - Telling you to *do* something an agent does is RUN.
   "restock the kitchen" is RUN stock_reorder. "build next week's roster" is
   RUN shift_scheduling.
@@ -539,6 +555,8 @@ def route(instruction: str, history: list[Any] | None = None) -> Intent:
     upper = verdict.upper()
     if upper.startswith("QUESTION"):
         return Intent(kind="question")
+    if upper.startswith("SOLD"):
+        return Intent(kind="sold")
     if upper.startswith("RUN"):
         named = find_agent(verdict.split(maxsplit=1)[1] if " " in verdict else "")
         if named:
