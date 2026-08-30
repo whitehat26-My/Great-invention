@@ -757,3 +757,59 @@ class TestTellingApartFromAsking:
         """The old asymmetry, unchanged: a guess that only reads is safe, and
         the guess that offers to write the books is the one to avoid."""
         assert self._verdict(monkeypatch, "I think they want...").kind == "question"
+
+
+class TestTwoSourcesAndWhichOneWins:
+    """The owner was standing in the room; the database was not.
+
+    A till that dropped a ticket, a card machine that timed out, a night nobody
+    got round to recording — the system's number is wrong in all three and the
+    owner's is right. Preferring the record over the person who was there is how
+    a system teaches its owner to stop telling it things.
+    """
+
+    def _prompt(self, db) -> str:
+        from restaurant_ai.assistant import _system_prompt, build_snapshot
+
+        return " ".join(_system_prompt(build_snapshot(db)).split())
+
+    def test_the_owner_outranks_the_database(self, db):
+        said = self._prompt(db)
+        assert "The owner's figure wins" in said
+        assert "standing in the room" in said
+
+    def test_an_override_has_to_be_declared(self, db):
+        """Silently replacing the books with a remark is worse than either
+        number on its own, because nobody can tell afterwards which it was."""
+        said = self._prompt(db)
+        assert "say that you are, and what the record says instead" in said
+        assert "Never silently replace the books" in said
+
+    def test_the_database_answers_when_nothing_was_said(self, db):
+        assert "If they have said nothing about it, the database is the answer" in self._prompt(db)
+
+    def test_both_sources_are_named(self, db):
+        said = self._prompt(db)
+        assert "What the owner tells you" in said
+        assert "POS sales and stock levels" in said
+
+
+class TestHowHeSounds:
+    def test_he_is_told_to_acknowledge_briefly(self, db):
+        from restaurant_ai.assistant import _system_prompt, build_snapshot
+
+        said = " ".join(_system_prompt(build_snapshot(db)).split())
+        assert "Acknowledge briefly and move on" in said
+        assert "Never a paragraph confirming what they just told you" in said
+
+    def test_he_leads_with_the_number_then_what_it_means(self, db):
+        from restaurant_ai.assistant import _system_prompt, build_snapshot
+
+        said = " ".join(_system_prompt(build_snapshot(db)).split())
+        assert "Lead with the number, then what it means" in said
+
+    def test_the_greeting_is_a_colleague_not_a_desk(self):
+        from restaurant_ai.assistant import greet
+
+        assert "I am here" not in greet()
+        assert greet().startswith("Yes?")
