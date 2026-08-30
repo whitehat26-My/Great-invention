@@ -455,26 +455,56 @@ never leaves the building, and there is no account to lose. The honest case
 against: it is off when the power is off, and nobody is there at 3am to turn it
 back on.
 
-Once the instance exists (Ubuntu 22.04+, "Ampere" shape, 4 OCPU / 24 GB):
+### Creating the instance
 
-> **These commands run on the server, in its Ubuntu terminal** — connect with
-> `ssh ubuntu@<the instance's IP>` first. They are Linux commands; pasted into
-> PowerShell on your own laptop they fail on the first `&&` (and `sudo` is not
-> a Windows thing). On your laptop, use `restaurant-ai up` instead.
+Only you can do this part — it needs your account and your card.
+
+1. **oracle.com/cloud/free** → Start for free. Pick the region nearest you;
+   **Singapore** is closest to Malaysia and, for the same reason, the busiest.
+   The region cannot be changed later, so if Singapore refuses capacity for days,
+   starting again in another Asian region is a new account.
+2. It asks for a card to prove you are a person. It charges about a dollar and
+   refunds it; Always Free resources never bill.
+3. **Compute → Instances → Create instance.**
+   - Image: **Ubuntu 22.04** or newer
+   - Shape: **Change shape → Ampere → VM.Standard.A1.Flex**, then set
+     **4 OCPUs and 24 GB**. This is the whole free allowance in one machine.
+   - **Download the private key** when it offers. There is no second chance, and
+     without it you cannot get in.
+4. Note the **public IP address**.
+
+**"Out of host capacity" is the normal outcome, not a mistake.** The free ARM
+shape is heavily contested. People retry for days. Try at odd hours, and try
+`VM.Standard.A1.Flex` with fewer cores if the full four will not create — 2
+OCPUs and 12 GB still runs all of this.
+
+### Then, on the server
 
 ```bash
-sudo apt update
-sudo apt install -y docker.io docker-compose-v2 git
-sudo usermod -aG docker $USER
-newgrp docker
+ssh -i /path/to/your-key ubuntu@<the ip>
 
 git clone https://github.com/whitehat26-My/Great-invention.git
 cd Great-invention
-cp .env.example .env
-nano .env                              # the values listed above
-docker compose up -d --build
-docker compose exec api restaurant-ai doctor
+bash scripts/oracle_setup.sh
 ```
+
+It runs three times on purpose, and says why each time:
+
+1. **First run** installs Docker and stops — group membership only applies to a
+   new login, so it asks you to log out and back in.
+2. **Second run** writes a `.env` with every setting named and blank, and stops.
+   Fill it in with `nano .env`. It never overwrites a `.env` that exists: this
+   file holds the only secrets on the machine, and a setup script that clobbers
+   them is one nobody dares run twice.
+3. **Third run** builds, starts everything, and prints `doctor`.
+
+It refuses rather than half-starting. A missing bot token gives a deaf bot and a
+missing dashboard key gives pages that refuse to serve — both silent, both
+discovered hours later — so it names what is still blank and waits.
+
+**No firewall rules. No open ports.** The listener dials out and the dashboard is
+reached through a tunnel that also dials out, so every Oracle networking default
+can be left exactly as it is. That is the part people lose an evening to.
 
 **Oracle's networking is famously fiddly — and none of it applies here.** Free
 instances have both a cloud security list and host `iptables`, and getting a
