@@ -235,3 +235,37 @@ class TestStartRealBringsItsOwnDatabase:
         result = CliRunner().invoke(app, ["start-real"])
         assert result.exit_code == 1
         assert "erases every order" in result.output
+
+
+class TestNoCommandGoesSilentForMinutes:
+    """`ensure_database` can run `docker compose up`, pull images and then wait
+    two minutes for Postgres to answer — and every word about that arrived at
+    the end. A command that prints nothing for two minutes has not started, as
+    far as anyone watching it is concerned, and the reasonable thing to do with
+    it is press Ctrl-C."""
+
+    def _first_line_before(self, monkeypatch, command: list[str]) -> str:
+        from typer.testing import CliRunner
+
+        from restaurant_ai.cli import app
+
+        said: list[str] = []
+
+        def slow() -> tuple[bool, str]:
+            # Whatever was printed before this ran is all the owner sees while
+            # Docker pulls images.
+            said.append("|MARK|")
+            return False, "Docker is installed but not running."
+
+        monkeypatch.setattr("restaurant_ai.services.ensure_database", slow)
+        result = CliRunner().invoke(app, command)
+        return result.output.split("Docker is installed")[0]
+
+    def test_start_real_says_what_it_is_doing_first(self, monkeypatch):
+        before = self._first_line_before(monkeypatch, ["start-real", "--yes"])
+        assert "Checking the database" in before
+        assert "can take a minute" in before
+
+    def test_up_says_it_too(self, monkeypatch):
+        before = self._first_line_before(monkeypatch, ["up"])
+        assert "Checking the database" in before

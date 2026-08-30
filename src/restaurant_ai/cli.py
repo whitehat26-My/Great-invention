@@ -161,6 +161,15 @@ def start_real(
 
     from sqlalchemy import text
 
+    # Said before the wait, not after it. `ensure_database` can run `docker
+    # compose up`, pull images and then wait two minutes for Postgres to answer
+    # — and every word about that arrives at the end. A command that prints
+    # nothing for two minutes has not started as far as anyone watching is
+    # concerned, and the reasonable thing to do with it is press Ctrl-C.
+    typer.echo(
+        "\n  Checking the database (starting Docker if it is not up — this can take a minute)…"
+    )
+
     # Starting Postgres is this command's job, not the owner's. Sending them to
     # `up` for it was worse than unhelpful: `up` starts the whole restaurant in
     # a window they would then have to kill, and the four processes it starts
@@ -169,7 +178,7 @@ def start_real(
     if not ok:
         typer.echo(f"\n  {message}", err=True)
         raise typer.Exit(code=1)
-    typer.echo(f"\n  {message}")
+    typer.echo(f"  {message}")
 
     settings = get_settings()
     typer.echo(f"  Emptying {settings.postgres_db} at {settings.postgres_host}…")
@@ -1012,11 +1021,14 @@ def up(
     # starting it is our job, not the owner's; when it is not, say which of the
     # three situations this machine is in, each with its own fix — rather than
     # supervising four crash loops that all mean "Postgres is not running".
+    typer.echo(
+        "\n  Checking the database (starting Docker if it is not up — this can take a minute)…"
+    )
     ok, message = ensure_database()
     if not ok:
         typer.echo(f"\n  {message}", err=True)
         raise typer.Exit(code=1)
-    typer.echo(f"\n  {message}")
+    typer.echo(f"  {message}")
 
     # The same step compose runs as its `migrate` service, before anything
     # reads the database. Without it a fresh machine starts four processes
